@@ -112,9 +112,12 @@ struct BackupView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
-                section("Before Restore", backupManager.preRestoreBackups)
-                section("Manual", backupManager.manualBackups)
-                section("Automatic", backupManager.autoBackups)
+                // Pinned backups get their own section at the top; they're filtered
+                // out of their kind sections below so each appears exactly once.
+                section("Pinned", backupManager.pinnedBackups)
+                section("Before Restore", backupManager.preRestoreBackups.filter { !$0.isPinned })
+                section("Manual", backupManager.manualBackups.filter { !$0.isPinned })
+                section("Automatic", backupManager.autoBackups.filter { !$0.isPinned })
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)

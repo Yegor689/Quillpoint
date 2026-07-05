@@ -129,6 +129,11 @@ final class BackupManager {
     var autoBackups:       [Backup] { backups.filter { $0.kind == .auto       } }
     var manualBackups:     [Backup] { backups.filter { $0.kind == .manual     } }
     var preRestoreBackups: [Backup] { backups.filter { $0.kind == .preRestore } }
+    /// All pinned backups regardless of kind — for the UI's dedicated "Pinned"
+    /// section. Purely additive; the kind lists above are unchanged (a pinned backup
+    /// still appears in its kind list too, so the VIEW is responsible for showing it
+    /// in only one section).
+    var pinnedBackups:     [Backup] { backups.filter { $0.isPinned } }
 
     /// - Parameters:
     ///   - storeURL: the SwiftData store to back up / restore into.
