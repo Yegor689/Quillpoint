@@ -55,7 +55,8 @@ struct MigrationTests {
         #expect(tasks.allSatisfy { $0.project.title == "Work" })
     }
 
-    /// Same as `migrate` but takes an explicit URL so the caller controls cleanup.
+    /// Seeds a V1 store at `url` via the frozen V1 models, then reopens it through the
+    /// migration plan and returns the migrated (V2) container.
     private func migrateReturningURL(_ url: URL, seed: (ModelContext) throws -> Void) throws -> ModelContainer {
         do {
             let schema = Schema(versionedSchema: SchemaV1.self)

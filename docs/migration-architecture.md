@@ -26,9 +26,15 @@ currently means silent total loss.
 ### Decisions (agreed)
 - **Engine:** SwiftData `VersionedSchema` + `SchemaMigrationPlan` as the backbone
   (idiomatic, least custom code), with custom migration stages for data backfill.
-- **Failure policy:** **Quarantine + halt** — on any open/migration failure, move
-  the live store aside to a timestamped quarantine copy (never delete) and show a
-  recovery UI; replace the current rm-and-recreate entirely.
+- **Failure policy:** **Leave in place + recover** — on any open/migration failure,
+  LEAVE the store exactly where it is (never move or delete) and show a recovery UI.
+  "Try Again" retries the same store (so it succeeds once a fixed build is installed);
+  moving the store aside ("Start Fresh") is an explicit, confirmed user action only.
+  NOTE (updated after v1.1.0): an earlier version of this doc said "quarantine + halt"
+  — automatically moving the store aside on failure. That shipped in 1.1.0 and caused
+  data-loss-by-omission: "Try Again" then found no store and silently opened blank.
+  Do NOT reintroduce automatic quarantine. See [[migration-tests-sigtrap-on-beta]] and
+  the versioned-schema-shape memory for the related migration bug.
 
 ## Architecture
 
@@ -63,10 +69,12 @@ Replace the inline container creation + the rm-and-recreate block with a small
    reinvent. (Restructure so the backup primitive is callable before the live
    container exists — it only needs `storeURL`, which it already has.)
 2. Open: `ModelContainer(for: latestSchema, migrationPlan: QuillpointMigrationPlan.self, configurations:)`.
-3. **On failure → quarantine + halt:** move `TaskTracker.store` (+ `-wal`/`-shm`) to
-   `…/Quarantine/TaskTracker-<timestamp>.store` (copy/move, **never delete**), then
-   surface a recovery state to the UI instead of constructing an empty store.
-   No more `FileManager.removeItem(storeURL)`.
+3. **On failure → leave the store in place** and return `.failed(reason:storeURL:)`.
+   Do NOT move or delete it. Surface a recovery state to the UI instead of
+   constructing an empty store. No `FileManager.removeItem(storeURL)`, and no
+   automatic move-to-Quarantine (that was the 1.1.0 data-loss bug). Moving the store
+   aside is `PersistenceController.startFresh(storeURL:)` — invoked only from the
+   recovery screen's confirmed "Start Fresh" action.
 
 ### 4. Recovery UI (new `TaskTracker/Views/RecoveryView.swift`)
 When bring-up fails, `ContentView` shows a recovery screen instead of the task
