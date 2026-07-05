@@ -38,7 +38,7 @@ struct AllTasksView: View {
         switch grouping {
         case .project:
             sections = projects.compactMap { project in
-                let tasks = active.filter { $0.project?.id == project.id }
+                let tasks = active.filter { $0.project.id == project.id }
                 guard !tasks.isEmpty else { return nil }
                 return (header: project.title, tasks: tasks)
             }

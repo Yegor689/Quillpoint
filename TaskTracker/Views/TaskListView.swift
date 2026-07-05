@@ -369,8 +369,8 @@ struct TaskRowView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        if showProjectBadge, let projectName = task.project?.title {
-                            Label(projectName, systemImage: "folder")
+                        if showProjectBadge {
+                            Label(task.project.title, systemImage: "folder")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6)
@@ -502,7 +502,7 @@ struct TaskRowView: View {
             }
             // Only root tasks move between projects; subtasks follow their parent.
             if !isSubtask {
-                let destinations = projects.filter { $0.id != task.project?.id }
+                let destinations = projects.filter { $0.id != task.project.id }
                 if !destinations.isEmpty {
                     Menu("Move to") {
                         ForEach(destinations) { project in

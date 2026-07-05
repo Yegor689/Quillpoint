@@ -245,21 +245,25 @@ final class BackupManager {
             liveProjectsByID[sp.id] = project
         }
 
+        // Recreate each task in its destination project. The source is read through
+        // the migration plan, so `st.project` is already the (now non-optional) V2
+        // shape; if a source row somehow still has no mapped project, fall back via
+        // ProjectBackfill so a restored task is never left orphaned.
         var liveTasksByID: [UUID: Task] = [:]
         for st in sourceTasks {
-            let task = st.cloneScalars()
+            let mapped = liveProjectsByID[st.project.id]
+                ?? liveProjectsByID.values.sorted { $0.title < $1.title }.first
+                ?? { let p = Project(title: "Tasks"); live.insert(p); liveProjectsByID[p.id] = p; return p }()
+            let task = st.cloneScalars(into: mapped)
             live.insert(task)
+            mapped.tasks.append(task)
             liveTasksByID[st.id] = task
         }
 
-        // Wire relationships from the source's to-one references, setting BOTH
-        // sides so inverse collections hydrate.
+        // Wire the parent/subtask relationships by id, setting BOTH sides so inverse
+        // collections hydrate. (Project is already set at creation above.)
         for st in sourceTasks {
             guard let task = liveTasksByID[st.id] else { continue }
-            if let pid = st.project?.id, let project = liveProjectsByID[pid] {
-                task.project = project
-                project.tasks.append(task)
-            }
             if let parentID = st.parent?.id, let parent = liveTasksByID[parentID] {
                 task.parent = parent
                 parent.subtasks.append(task)

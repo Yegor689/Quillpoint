@@ -71,9 +71,9 @@ struct TaskStoreTests {
         f.store.moveTask(s.clean, to: s.work)
 
         // The root and both subtasks now belong to Work, on both relationship sides.
-        #expect(s.clean.project?.id == s.work.id)
-        #expect(s.vacuum.project?.id == s.work.id)
-        #expect(s.dishes.project?.id == s.work.id)
+        #expect(s.clean.project.id == s.work.id)
+        #expect(s.vacuum.project.id == s.work.id)
+        #expect(s.dishes.project.id == s.work.id)
         #expect(s.work.tasks.contains { $0.id == s.clean.id })
         #expect(s.work.tasks.contains { $0.id == s.vacuum.id })
         #expect(s.personal.tasks.isEmpty)
@@ -88,14 +88,14 @@ struct TaskStoreTests {
         let s = seed(f)
 
         f.store.moveTask(s.clean, to: s.work)
-        #expect(s.clean.project?.id == s.work.id)
+        #expect(s.clean.project.id == s.work.id)
 
         f.undoManager.undo()
 
         // Back in Personal, subtasks too; Work is empty of the moved tree.
-        #expect(s.clean.project?.id == s.personal.id)
-        #expect(s.vacuum.project?.id == s.personal.id)
-        #expect(s.dishes.project?.id == s.personal.id)
+        #expect(s.clean.project.id == s.personal.id)
+        #expect(s.vacuum.project.id == s.personal.id)
+        #expect(s.dishes.project.id == s.personal.id)
         #expect(s.personal.tasks.contains { $0.id == s.clean.id })
         #expect(s.work.tasks.contains { $0.id == s.clean.id } == false)
     }
@@ -106,12 +106,12 @@ struct TaskStoreTests {
 
         // A subtask is not a root task — moving it directly is a no-op.
         f.store.moveTask(s.vacuum, to: s.work)
-        #expect(s.vacuum.project?.id == s.personal.id)
+        #expect(s.vacuum.project.id == s.personal.id)
         #expect(s.vacuum.parent?.id == s.clean.id)
 
         // Moving to the project it's already in is a no-op.
         f.store.moveTask(s.clean, to: s.personal)
-        #expect(s.clean.project?.id == s.personal.id)
+        #expect(s.clean.project.id == s.personal.id)
     }
 
     /// Reproduction for the reported edge case: moving a task that has subtasks

@@ -63,11 +63,14 @@ class Task {
     /// order completed tasks (newest completion on top of the done group).
     var completedAt: Date?
     var reminderDate: Date?
-    var project: Project?
+    /// The project this task belongs to. Non-optional since 2.0.0: every task always
+    /// lives in a project (a subtask in its parent's). The V1→V2 migration backfills
+    /// any legacy orphan — see [ProjectBackfill].
+    var project: Project
     @Relationship(inverse: \Task.subtasks) var parent: Task?
     @Relationship(deleteRule: .cascade) var subtasks: [Task]
 
-    init(plainTitle: String = "", plainDesc: String = "", priority: Int = 1, project: Project? = nil, parent: Task? = nil) {
+    init(plainTitle: String = "", plainDesc: String = "", priority: Int = 1, project: Project, parent: Task? = nil) {
         self.id = UUID()
         self.titleRTF = Task.rtf(from: plainTitle)
         self.descRTF = Task.rtf(from: plainDesc)
@@ -79,14 +82,15 @@ class Task {
         self.subtasks = []
     }
 
-    /// Returns a detached copy carrying every SCALAR field of this task — used by
-    /// backup restore to recreate a task in another store. Relationships
-    /// (`project`, `parent`, `subtasks`) are deliberately NOT copied: they point
-    /// into this task's store, so the caller wires them by id in the destination
-    /// store. Keeping this next to the stored properties is the single place to
-    /// update when a field is added — see the backup round-trip integrity test.
-    func cloneScalars() -> Task {
-        let copy = Task()
+    /// Returns a detached copy carrying every SCALAR field of this task, placed in
+    /// `project` — used by backup restore to recreate a task in another store. The
+    /// `parent`/`subtasks` relationships are deliberately NOT copied; the caller
+    /// wires them by id in the destination store. `project` is required at init (a
+    /// task always belongs to one), so the destination project is passed in.
+    /// Keeping this next to the stored properties is the single place to update when
+    /// a field is added — see the backup round-trip integrity test.
+    func cloneScalars(into project: Project) -> Task {
+        let copy = Task(project: project)
         copy.id = id
         copy.titleRTF = titleRTF
         copy.descRTF = descRTF
