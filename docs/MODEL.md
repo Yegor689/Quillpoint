@@ -10,13 +10,14 @@ Represents a top-level grouping of tasks.
 | `title` | `String` | Display name |
 | `desc` | `String` | Optional details |
 | `createdAt` | `Date` | Timestamp set on creation |
-| `tasks` | `[Task]` | All tasks belonging to this project (SwiftData relationship) |
+| `tasks` | `[Task]` | All tasks belonging to this project. `@Relationship(deleteRule: .cascade, inverse: \Task.project)` — the explicit inverse makes SwiftData maintain both sides on a to-one assignment (fixed the cross-project move data loss) |
 
 ---
 
 ## Task
 
-Tasks belong to a project and can be nested one level deep (subtasks via `parent`).
+Every task belongs to a project (`project` is non-optional as of the V2 schema) and
+can be nested one level deep (subtasks via `parent`).
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -29,7 +30,7 @@ Tasks belong to a project and can be nested one level deep (subtasks via `parent
 | `completedAt` | `Date?` | When most recently marked done; `nil` while incomplete. Orders the completed group (newest on top) |
 | `sortIndex` | `Int` | Manual position within the parent context (project for roots, parent task for subtasks). Primary ordering key |
 | `reminderDate` | `Date?` | Optional reminder time; `nil` when no reminder is set |
-| `project` | `Project?` | Owning project (SwiftData relationship) |
+| `project` | `Project` | Owning project (SwiftData relationship). Non-optional as of schema V2 — every task always belongs to a project (a subtask inherits its parent's). Legacy stores are migrated forward, backfilling any orphan |
 | `parent` | `Task?` | `nil` for root tasks; set to parent task for subtasks |
 | `subtasks` | `[Task]` | Child tasks (cascade-delete on parent delete) |
 
@@ -48,6 +49,8 @@ Tasks belong to a project and can be nested one level deep (subtasks via `parent
 | Helper | Notes |
 |--------|-------|
 | `setDone(_:)` / `toggleDone()` | Sets completion and stamps `completedAt` — always use instead of mutating `isDone` directly |
+| `syncDoneWithSubtasks()` | Re-derives a parent's completion from its subtasks (done exactly when it has subtasks and all are done). Call after a subtask's completion changes |
+| `isDrivenBySubtasks` | True when a task has subtasks, so its own checkbox is a no-op (completion is derived) |
 | `Task.rtf(from:font:)` | Converts a plain `String` to RTF `Data` with default label color |
 | `Task.plain(from:)` | Extracts plain text from RTF `Data` |
 | `Task.resizingFontRTF(_:to:)` | Re-renders title RTF at a new font size (used when a task changes level) |
@@ -77,8 +80,9 @@ Project 1 ──< Task (root)
 Project 2 ──< Task (root)
 ```
 
-- One project has many tasks (`project` back-reference on `Task`)
-- One task optionally has many subtasks (`parent` self-reference on `Task`, cascade-delete)
+- One project has many tasks; every task has exactly one project (`project` is
+  non-optional, with an explicit inverse on `Project.tasks`)
+- A task may have many subtasks (`parent` self-reference on `Task`, cascade-delete)
 - Deleting a project cascade-deletes its tasks
 - Deleting a task cascade-deletes its subtasks
 
@@ -105,7 +109,9 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 | `TaskDetailView` | Full detail for a single task — rich text title/description, subtask list, priority, reminder, completion |
 | `ProjectListView` | Sidebar list of projects plus an "All Projects" entry at the top |
 | `SettingsView` | Settings window (appearance + behavior), opened via ⌘, |
-| `BackupView` | Backup management sheet — view, create, restore; opened from the Backups menu command |
+| `BackupView` | Backup management sheet — view, create, restore, rename, and pin; opened from the Backups menu command |
+| `RecoveryView` | Shown at the scene root when the store fails to open. Leaves data in place; offers Try Again, Export Diagnostics, and a confirmed Start Fresh |
+| `WhatsNewView` | Per-version highlights, shown once after an update and via Help → What's New |
 | `ReminderPopover` / `ReminderToast` | Reminder date/time picker and the in-app banner shown when one fires |
 
 ## Non-model managers
@@ -117,3 +123,10 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 | `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store via SQLite's online backup API (consistent even with uncommitted WAL data); restores in place by rewriting the live store from the snapshot, keeping a single rolling pre-restore safety backup |
 | `ReminderManager` | Schedules local notifications and handles their actions |
 | `AppSettings` | Persisted user preferences (theme, accent, defaults), surfaced in Settings |
+
+## Persistence & migration
+
+| Type | Purpose |
+|------|---------|
+| `PersistenceController` | Owns store bring-up: takes a pre-migration backup, opens the container with the migration plan, and on failure LEAVES the store in place and reports `.failed` (never auto-moves or deletes). `startFresh(storeURL:)` moves the store to a Quarantine folder only on an explicit, confirmed user action |
+| `QuillpointSchema` / `QuillpointMigrationPlan` | The current schema (latest `VersionedSchema`) and the ordered migration stages. `SchemaV1` (frozen, in `SchemaV1Models`) must match the shape shipped in 1.0.x exactly; `SchemaV2` makes `Task.project` non-optional with a custom stage that backfills orphans via `ProjectBackfill` |
