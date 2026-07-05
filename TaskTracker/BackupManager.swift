@@ -222,9 +222,13 @@ final class BackupManager {
         }
 
         // Read the backup with a separate container so the live one is untouched.
-        let schema = Schema([Project.self, Task.self])
+        // Use the versioned schema + migration plan so an older backup migrates
+        // forward on read, same as the live store would.
+        let schema = QuillpointSchema.current
         let config = ModelConfiguration(schema: schema, url: backup.url)
-        let source = ModelContext(try ModelContainer(for: schema, configurations: config))
+        let source = ModelContext(try ModelContainer(for: schema,
+                                                     migrationPlan: QuillpointMigrationPlan.self,
+                                                     configurations: config))
         let sourceProjects = try source.fetch(FetchDescriptor<Project>())
         let sourceTasks = try source.fetch(FetchDescriptor<Task>())
 
