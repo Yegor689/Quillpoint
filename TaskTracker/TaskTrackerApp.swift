@@ -2,25 +2,31 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+/// The live services built once the store opens. Bundled so a successful bring-up
+/// (initial OR retry) can populate them together, and a failed one leaves them nil.
+private struct AppServices {
+    let container: ModelContainer
+    let projectStore: ProjectStore
+    let taskStore: TaskStore
+    let reminderManager: ReminderManager
+}
+
 @main
 struct TaskTrackerApp: App {
     private let storeURL = URL.applicationSupportDirectory
         .appending(component: "TaskTracker.store")
 
-    // Populated only when the store opens successfully. On failure these stay nil
-    // and the scene shows RecoveryView instead (the store is quarantined, not lost).
-    let container: ModelContainer?
-    let projectStore: ProjectStore?
-    let taskStore: TaskStore?
-    let reminderManager: ReminderManager?
-    // BackupManager exists regardless — it's needed to take the pre-migration backup
-    // before the container opens, and to drive recovery.
+    // BackupManager exists regardless — it takes the pre-migration backup before the
+    // container opens and drives recovery.
     let backupManager: BackupManager
     let settings = AppSettings()
 
-    /// The result of bringing up the store. Drives whether the app shows its normal
-    /// UI or the recovery screen.
+    /// The result of bringing up the store, and the services built from it. Both are
+    /// @State so "Try Again" can rebuild them after a successful retry (the original
+    /// version used `let`, so a retry could never populate the UI). nil services ⇒
+    /// show recovery.
     @State private var bringUp: PersistenceController.State
+    @State private var services: AppServices?
     /// Presents the What's New screen (auto once per new version, or via the menu).
     @State private var showWhatsNew = false
 
@@ -34,32 +40,41 @@ struct TaskTrackerApp: App {
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
         _bringUp = State(initialValue: state)
+        _services = State(initialValue: Self.buildServices(from: state, backupManager: backupManager))
+    }
 
-        switch state {
-        case .ready(let container):
-            self.container = container
-            let taskStore = TaskStore(context: container.mainContext)
-            self.taskStore = taskStore
-            projectStore = ProjectStore(context: container.mainContext)
-            reminderManager = ReminderManager()
-            backupManager.liveContainer = container
-            taskStore.backfillSortIndicesIfNeeded()
-            backupManager.startAutoBackup()
-        case .failed:
-            container = nil
-            taskStore = nil
-            projectStore = nil
-            reminderManager = nil
-        }
+    /// Builds the live services from a bring-up result, or nil if it failed.
+    private static func buildServices(from state: PersistenceController.State,
+                                      backupManager: BackupManager) -> AppServices? {
+        guard case .ready(let container) = state else { return nil }
+        let taskStore = TaskStore(context: container.mainContext)
+        backupManager.liveContainer = container
+        taskStore.backfillSortIndicesIfNeeded()
+        backupManager.startAutoBackup()
+        return AppServices(
+            container: container,
+            projectStore: ProjectStore(context: container.mainContext),
+            taskStore: taskStore,
+            reminderManager: ReminderManager())
     }
 
     var body: some Scene {
         WindowGroup {
-            switch bringUp {
-            case .ready:
-                readyView
-            case .failed(let reason, let quarantineURL):
-                RecoveryView(reason: reason, quarantineURL: quarantineURL, onRetry: retryBringUp)
+            // Show the normal UI only when services were built. Otherwise recovery —
+            // never force-unwrap into a crash.
+            if let services {
+                readyView(container: services.container,
+                          projectStore: services.projectStore,
+                          taskStore: services.taskStore,
+                          reminderManager: services.reminderManager)
+            } else {
+                let reason: String = {
+                    if case .failed(let r, _) = bringUp { return r }
+                    return "The app couldn't finish starting up."
+                }()
+                RecoveryView(reason: reason,
+                             onRetry: retryBringUp,
+                             onStartFresh: startFresh)
             }
         }
         .defaultSize(width: 960, height: 620)
@@ -89,18 +104,19 @@ struct TaskTrackerApp: App {
         }
     }
 
-    /// The normal app UI. Only built when bring-up succeeded, so the force-unwraps
-    /// here are safe — `.ready` implies all of these are populated.
+    /// The normal app UI. Dependencies are passed in (unwrapped by the caller in
+    /// `body`), so this never force-unwraps and can't crash on the failed path.
     @ViewBuilder
-    private var readyView: some View {
-        let container = container!
-        let taskStore = taskStore!
+    private func readyView(container: ModelContainer,
+                           projectStore: ProjectStore,
+                           taskStore: TaskStore,
+                           reminderManager: ReminderManager) -> some View {
         ContentView()
             .modelContainer(container)
-            .environment(projectStore!)
+            .environment(projectStore)
             .environment(taskStore)
             .environment(backupManager)
-            .environment(reminderManager!)
+            .environment(reminderManager)
             .environment(settings)
             .tint(settings.accent.color)
             .environment(\.appAccent, settings.accent.color)
@@ -142,15 +158,26 @@ struct TaskTrackerApp: App {
             }
     }
 
-    /// Re-attempts bring-up (the recovery screen's "Try Again"). If it now succeeds,
-    /// the switch in `body` renders the normal UI. A relaunch is still the cleanest
-    /// path, but retrying in place covers transient failures.
+    /// "Try Again": re-attempts bring-up against the SAME (untouched) store. If it now
+    /// succeeds, services are rebuilt and the normal UI appears. Safe to press
+    /// repeatedly — nothing is moved or cleared, so a retry never loses data.
     private func retryBringUp() {
-        bringUp = PersistenceController.bringUp(
+        let state = PersistenceController.bringUp(
             storeURL: storeURL,
             schema: QuillpointSchema.current,
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
+        bringUp = state
+        services = Self.buildServices(from: state, backupManager: backupManager)
+    }
+
+    /// "Start Fresh": an EXPLICIT, confirmed choice to set the unreadable store aside
+    /// (moved to Quarantine, never deleted) and open a clean empty store. Only invoked
+    /// from the recovery screen after the user confirms; never automatic.
+    private func startFresh() {
+        PersistenceController.startFresh(storeURL: storeURL)
+        backupManager.refresh()
+        retryBringUp() // now opens a fresh empty store
     }
 
     /// Ensure the About panel shows the real app icon. macOS loads the icon from
@@ -175,7 +202,7 @@ struct TaskTrackerApp: App {
     /// Exports all projects and tasks to a user-chosen JSON file — a portable,
     /// human-readable copy of everything in the app. Read-only; never mutates data.
     private func exportData() {
-        guard let container else { return }
+        guard let container = services?.container else { return }
         guard let data = try? DataExportManager.json(from: container.mainContext) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -190,7 +217,7 @@ struct TaskTrackerApp: App {
     /// user whether to merge or replace, takes a safety backup, then applies. The
     /// destructive parts only run after explicit confirmation.
     private func importData() {
-        guard let container else { return }
+        guard let container = services?.container else { return }
         let open = NSOpenPanel()
         open.allowedContentTypes = [.json]
         open.allowsMultipleSelection = false
@@ -256,7 +283,9 @@ struct TaskTrackerApp: App {
     /// Clears reminders whose time has already passed (e.g. fired or were missed while the app was closed)
     /// so the UI never shows a stale past reminder.
     private func clearExpiredReminders() {
-        guard let container, let reminderManager else { return }
+        guard let services else { return }
+        let container = services.container
+        let reminderManager = services.reminderManager
         let now = Date()
         let descriptor = FetchDescriptor<Task>(
             predicate: #Predicate { $0.reminderDate != nil && $0.reminderDate! < now }

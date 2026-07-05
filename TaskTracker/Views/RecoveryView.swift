@@ -2,19 +2,20 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// Shown at the scene root when the store fails to open (a corrupt store or a
-/// failed migration). The store is never deleted on failure — it's quarantined —
-/// so this screen's job is to reassure the user their data is preserved and offer
-/// safe next steps: retry, reveal the quarantined copy, or export diagnostics for a
-/// bug report. Restoring a backup happens through the normal Backups UI once the app
-/// comes up on a healthy store, so it isn't offered here (there is no live store to
-/// restore into while bring-up is failing).
+/// Shown at the scene root when the store fails to open (a corrupt store or a failed
+/// migration). The store is LEFT IN PLACE on failure — never moved or deleted — so:
+///   • "Try Again" retries against the same data (fixes a transient failure, or works
+///     after installing a build that fixes the migration), and
+///   • "Start Fresh" is an explicit, confirmed choice that sets the old data aside
+///     (recoverable) and starts empty.
+/// This avoids the trap where retrying silently opened a blank store.
 struct RecoveryView: View {
     let reason: String
-    let quarantineURL: URL?
     let onRetry: () -> Void
+    let onStartFresh: () -> Void
 
     @State private var showDetails = false
+    @State private var confirmStartFresh = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -28,28 +29,32 @@ struct RecoveryView: View {
             VStack(spacing: 6) {
                 Text("Your data has not been lost.")
                     .fontWeight(.medium)
-                if quarantineURL != nil {
-                    Text("A copy has been set aside so it can be recovered. Try again — if it keeps failing, export diagnostics and reach out, or restore a backup from the Backups menu once the app opens.")
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Try again — if it keeps failing, export diagnostics and reach out, or restore a backup from the Backups menu once the app opens.")
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
-                }
+                Text("It's still on your Mac, untouched. This often happens after an update — installing the latest version of Quillpoint and choosing Try Again usually fixes it. If you're stuck, export diagnostics and reach out before starting fresh.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 420)
+            .frame(maxWidth: 440)
 
             HStack(spacing: 12) {
                 Button("Try Again", action: onRetry)
                     .keyboardShortcut(.defaultAction)
-                if let quarantineURL {
-                    Button("Reveal Preserved Data") {
-                        NSWorkspace.shared.activateFileViewerSelecting([quarantineURL])
-                    }
-                }
                 Button("Export Diagnostics…", action: exportDiagnostics)
             }
+
+            // Destructive, de-emphasized, and confirmed — never a one-click blank start.
+            Button("Start Fresh…", role: .destructive) { confirmStartFresh = true }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .confirmationDialog(
+                    "Start with an empty Quillpoint?",
+                    isPresented: $confirmStartFresh,
+                    titleVisibility: .visible
+                ) {
+                    Button("Start Fresh", role: .destructive, action: onStartFresh)
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Your current data will be set aside in a Quarantine folder (not deleted) so it can be recovered later, and Quillpoint will open empty.")
+                }
 
             DisclosureGroup("Technical details", isExpanded: $showDetails) {
                 ScrollView {
@@ -61,10 +66,10 @@ struct RecoveryView: View {
                 }
                 .frame(maxHeight: 120)
             }
-            .frame(maxWidth: 420)
+            .frame(maxWidth: 440)
         }
         .padding(40)
-        .frame(minWidth: 520, minHeight: 420)
+        .frame(minWidth: 540, minHeight: 460)
     }
 
     private func exportDiagnostics() {

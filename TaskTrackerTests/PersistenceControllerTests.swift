@@ -35,7 +35,7 @@ struct PersistenceControllerTests {
         }
     }
 
-    @Test func corruptStoreIsQuarantinedNotDeleted() throws {
+    @Test func failedOpenLeavesStoreInPlace() throws {
         let tmp = TempDir()
         let storeURL = tmp.store()
 
@@ -47,18 +47,42 @@ struct PersistenceControllerTests {
             schema: QuillpointSchema.current,
             migrationPlan: QuillpointMigrationPlan.self)
 
-        // The open must fail and report a quarantine location.
-        guard case .failed(_, let quarantineURL) = state else {
+        guard case .failed(_, let reportedURL) = state else {
             Issue.record("expected .failed, got \(state)")
             return
         }
-        let qURL = try #require(quarantineURL, "a quarantine URL should be reported")
+        // CRITICAL: the store is NOT moved on failure — so "Try Again" retries the
+        // same data and the app never silently comes up blank.
+        #expect(reportedURL == storeURL)
+        #expect(FileManager.default.fileExists(atPath: storeURL.path),
+                "failed open must leave the store exactly where it is")
+        // No Quarantine folder is created automatically.
+        let quarantineDir = storeURL.deletingLastPathComponent().appending(component: "Quarantine")
+        #expect(FileManager.default.fileExists(atPath: quarantineDir.path) == false)
+    }
 
-        // The store was MOVED, not deleted: original gone, quarantine copy present.
-        #expect(FileManager.default.fileExists(atPath: storeURL.path) == false,
-                "original store should have been moved out of the way")
-        #expect(FileManager.default.fileExists(atPath: qURL.path),
-                "quarantined store must still exist — data is never deleted")
+    @Test func startFreshQuarantinesStoreNeverDeletes() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+        try Data("not a database".utf8).write(to: storeURL)
+
+        // Explicit user choice: set the store aside.
+        let qURL = try #require(PersistenceController.startFresh(storeURL: storeURL),
+                                "startFresh should report a quarantine URL")
+
+        // Original moved out of the way; quarantined copy still exists (never deleted).
+        #expect(FileManager.default.fileExists(atPath: storeURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: qURL.path))
         #expect(qURL.path.contains("Quarantine"))
+
+        // A subsequent bring-up now opens a clean empty store successfully.
+        let state = PersistenceController.bringUp(
+            storeURL: storeURL,
+            schema: QuillpointSchema.current,
+            migrationPlan: QuillpointMigrationPlan.self)
+        guard case .ready = state else {
+            Issue.record("expected .ready after startFresh, got \(state)")
+            return
+        }
     }
 }

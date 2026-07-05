@@ -19,7 +19,12 @@ enum SchemaV1Models {
         var title: String = ""
         var desc: String = ""
         var createdAt: Date = Date()
-        @Relationship(deleteRule: .cascade, inverse: \Task.project) var tasks: [Task] = []
+        // IMPORTANT: this must match the shape SHIPPED in 1.0.x exactly, or SwiftData
+        // computes a different schema hash for V1 than what's recorded on disk and
+        // the migration can't start (loadIssueModelContainer). 1.0.x declared this
+        // relationship with an INFERRED inverse (no `inverse:`); the explicit inverse
+        // was a later (V2) change and must NOT appear here.
+        @Relationship(deleteRule: .cascade) var tasks: [Task] = []
 
         init() {}
     }
