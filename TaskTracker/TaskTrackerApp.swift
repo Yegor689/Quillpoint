@@ -21,6 +21,8 @@ struct TaskTrackerApp: App {
     /// The result of bringing up the store. Drives whether the app shows its normal
     /// UI or the recovery screen.
     @State private var bringUp: PersistenceController.State
+    /// Presents the What's New screen (auto once per new version, or via the menu).
+    @State private var showWhatsNew = false
 
     init() {
         let backupManager = BackupManager(storeURL: storeURL)
@@ -72,6 +74,11 @@ struct TaskTrackerApp: App {
                 Button("Import Data (JSON)…") { importData() }
                 Button("Export Diagnostics…") { exportDiagnostics() }
             }
+            CommandGroup(replacing: .help) {
+                Button("What's New in Quillpoint") {
+                    NotificationCenter.default.post(name: .showWhatsNew, object: nil)
+                }
+            }
         }
 
         Settings {
@@ -103,6 +110,13 @@ struct TaskTrackerApp: App {
                 settings.applyAppearance()
                 clearExpiredReminders()
                 applyDefaultFilter()
+                if WhatsNew.shouldPresent() { showWhatsNew = true }
+            }
+            .sheet(isPresented: $showWhatsNew, onDismiss: { WhatsNew.markSeen() }) {
+                WhatsNewView()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showWhatsNew)) { _ in
+                showWhatsNew = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .markTaskDone)) { note in
                 guard let idStr = note.object as? String,

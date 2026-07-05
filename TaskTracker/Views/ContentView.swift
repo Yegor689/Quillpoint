@@ -9,6 +9,8 @@ enum SidebarSelection: Hashable {
 extension Notification.Name {
     /// Posted by the app menu's "Backups…" command to open the Backups sheet.
     static let showBackups = Notification.Name("showBackups")
+    /// Posted by the Help menu's "What's New" command to reopen that screen.
+    static let showWhatsNew = Notification.Name("showWhatsNew")
 }
 
 struct ContentView: View {
