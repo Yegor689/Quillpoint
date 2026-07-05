@@ -16,8 +16,87 @@ struct Backup: Identifiable, Comparable {
     let date: Date
     let name: String
     let kind: BackupKind
+    /// User label ("" if none). Editable via BackupManager.rename.
+    let label: String
+    /// Pinned backups are protected from auto-pruning and float to the top.
+    let isPinned: Bool
 
-    static func < (lhs: Backup, rhs: Backup) -> Bool { lhs.date > rhs.date }
+    /// Newest first; pinned always above unpinned within a sort.
+    static func < (lhs: Backup, rhs: Backup) -> Bool {
+        if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+        return lhs.date > rhs.date
+    }
+}
+
+/// The single source of truth for the backup filename grammar. Every backup is a
+/// bare `.store` file whose stem encodes all its metadata; this parses and rebuilds
+/// that stem so the format lives in exactly one place.
+///
+/// Grammar: `{kind}-[pin-]{yyyy-MM-dd HH-mm-ss}[ {label}]`
+/// - `kind` prefix stays first so existing kind detection is unaffected.
+/// - optional `pin-` token marks a pinned backup.
+/// - fixed-width timestamp.
+/// - optional free-text label as the trailing remainder.
+struct BackupName {
+    var kind: BackupKind
+    var isPinned: Bool
+    var date: Date
+    var label: String
+
+    private static let pinToken = "pin-"
+
+    private static let timestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        return f
+    }()
+
+    /// Parses a filename stem (no extension). Returns nil if it isn't a valid backup.
+    static func parse(_ stem: String) -> BackupName? {
+        let kind: BackupKind
+        let afterKind: Substring
+        if stem.hasPrefix("prerestore-") { kind = .preRestore; afterKind = stem.dropFirst("prerestore-".count) }
+        else if stem.hasPrefix("auto-")   { kind = .auto;       afterKind = stem.dropFirst("auto-".count) }
+        else if stem.hasPrefix("manual-") { kind = .manual;     afterKind = stem.dropFirst("manual-".count) }
+        else { return nil }
+
+        var rest = afterKind
+        var pinned = false
+        if rest.hasPrefix(pinToken) { pinned = true; rest = rest.dropFirst(pinToken.count) }
+
+        // The timestamp is the first two space-separated fields ("date time").
+        let fields = rest.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+        guard fields.count >= 2,
+              let date = timestampFormatter.date(from: "\(fields[0]) \(fields[1])")
+        else { return nil }
+
+        let label = fields.count > 2 ? String(fields[2]) : ""
+        return BackupName(kind: kind, isPinned: pinned, date: date, label: label)
+    }
+
+    /// Rebuilds the filename stem (no extension) from the fields.
+    func stem() -> String {
+        let ts = Self.timestampFormatter.string(from: date)
+        let cleaned = Self.sanitize(label)
+        var s = "\(kind.rawValue)-"
+        if isPinned { s += Self.pinToken }
+        s += ts
+        if !cleaned.isEmpty { s += " \(cleaned)" }
+        return s
+    }
+
+    /// Makes a label safe to embed in a filename without breaking parsing:
+    /// no path separators or control characters, collapsed whitespace, length-capped.
+    static func sanitize(_ raw: String) -> String {
+        let stripped = raw.unicodeScalars.filter { scalar in
+            scalar != "/" && scalar != ":" && !CharacterSet.controlCharacters.contains(scalar)
+        }
+        let collapsed = String(String.UnicodeScalarView(stripped))
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return String(collapsed.prefix(80))
+    }
 }
 
 @Observable
@@ -32,16 +111,6 @@ final class BackupManager {
 
     private static let maxAutoBackups = 10
     private static let intervalDefaultsKey = "autoBackupIntervalHours"
-
-    /// The timestamp format embedded in every backup's filename. This — not the
-    /// file's creation date — is the source of truth for when a backup was made,
-    /// because copyItem preserves the source store's creation date, so on-disk
-    /// metadata would make every backup look as old as the original store.
-    private static let nameTimestampFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH-mm-ss"
-        return f
-    }()
 
     /// Selectable auto-backup intervals. `nil` rawValue (0) means disabled.
     static let intervalOptions = [0, 1, 6, 12, 24]
@@ -127,28 +196,13 @@ final class BackupManager {
         backups = files.compactMap { url -> Backup? in
             guard url.pathExtension == "store" else { return nil }
             let stem = url.deletingPathExtension().lastPathComponent
-            let kind: BackupKind
-            if stem.hasPrefix("prerestore-") { kind = .preRestore }
-            else if stem.hasPrefix("auto-")   { kind = .auto }
-            else                              { kind = .manual }
-            // Prefer the timestamp baked into the filename; the file's creation
-            // date is unreliable because copyItem inherits the source store's.
-            let date = Self.date(fromStem: stem)
-                ?? (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-                ?? Date.distantPast
-            return Backup(url: url, date: date, name: stem, kind: kind)
+            // The filename is the source of truth for kind/date/label/pin (the file's
+            // own creation date is unreliable — the online backup inherits the source
+            // store's). Fall back to creation date only if the timestamp won't parse.
+            guard let parsed = BackupName.parse(stem) else { return nil }
+            return Backup(url: url, date: parsed.date, name: stem,
+                          kind: parsed.kind, label: parsed.label, isPinned: parsed.isPinned)
         }.sorted()
-    }
-
-    /// Parses the "yyyy-MM-dd HH-mm-ss" timestamp out of a backup filename stem
-    /// like "auto-2026-06-06 14-30-00 optional label".
-    private static func date(fromStem stem: String) -> Date? {
-        let withoutKind = stem.replacingOccurrences(
-            of: "^(auto|manual|prerestore)-", with: "", options: .regularExpression)
-        // The timestamp is the first two space-separated fields ("date time").
-        let fields = withoutKind.split(separator: " ")
-        guard fields.count >= 2 else { return nil }
-        return nameTimestampFormatter.date(from: "\(fields[0]) \(fields[1])")
     }
 
     @discardableResult
@@ -156,9 +210,8 @@ final class BackupManager {
         let fm = FileManager.default
         guard fm.fileExists(atPath: storeURL.path) else { return nil }
 
-        let timestamp = Self.nameTimestampFormatter.string(from: Date())
-        let prefix = kind.rawValue
-        let name = label.isEmpty ? "\(prefix)-\(timestamp)" : "\(prefix)-\(timestamp) \(label)"
+        let name = BackupName(kind: kind, isPinned: false, date: Date(),
+                              label: BackupName.sanitize(label)).stem()
         let dest = backupDir.appending(component: "\(name).store")
 
         // Snapshot via SQLite's online backup API rather than copying the files.
@@ -281,9 +334,52 @@ final class BackupManager {
         refresh()
     }
 
+    /// Prunes old AUTO backups down to `maxAutoBackups`, keeping the newest and
+    /// NEVER deleting a pinned one — pinning is how a user keeps a specific auto
+    /// backup indefinitely.
     private func pruneAutoBackups() {
-        let autos = autoBackups // already sorted newest first
-        let excess = autos.dropFirst(Self.maxAutoBackups)
+        let prunable = autoBackups.filter { !$0.isPinned } // sorted newest first
+        let excess = prunable.dropFirst(Self.maxAutoBackups)
         excess.forEach { delete(backup: $0) }
+    }
+
+    // MARK: - Rename / pin (filename is the source of truth)
+
+    /// Gives a backup a new user label (or clears it when empty). Renames the file
+    /// in place, preserving kind, pin state, and timestamp. No-op if the target name
+    /// already exists (shouldn't happen — timestamp is unique).
+    func rename(_ backup: Backup, to label: String) {
+        guard var parsed = BackupName.parse(backup.name) else { return }
+        parsed.label = BackupName.sanitize(label)
+        moveBackup(backup, toStem: parsed.stem())
+    }
+
+    /// Pins or unpins a backup. Pinned backups survive auto-pruning and sort to the
+    /// top. Implemented by adding/removing the `pin-` token in the filename.
+    func setPinned(_ backup: Backup, _ pinned: Bool) {
+        guard var parsed = BackupName.parse(backup.name), parsed.isPinned != pinned else { return }
+        parsed.isPinned = pinned
+        moveBackup(backup, toStem: parsed.stem())
+    }
+
+    /// Renames a backup's `.store` (and any `-wal`/`-shm` sidecars) to a new stem,
+    /// then refreshes. Sidecars normally don't exist (the online backup writes a
+    /// single self-contained file), but move them if present so nothing is orphaned.
+    private func moveBackup(_ backup: Backup, toStem newStem: String) {
+        let fm = FileManager.default
+        let dest = backupDir.appending(component: "\(newStem).store")
+        guard dest != backup.url, !fm.fileExists(atPath: dest.path) else { return }
+        do {
+            try fm.moveItem(at: backup.url, to: dest)
+        } catch {
+            return
+        }
+        for ext in ["wal", "shm"] {
+            let side = backup.url.appendingPathExtension(ext)
+            if fm.fileExists(atPath: side.path) {
+                try? fm.moveItem(at: side, to: dest.appendingPathExtension(ext))
+            }
+        }
+        refresh()
     }
 }

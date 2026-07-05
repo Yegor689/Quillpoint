@@ -124,13 +124,18 @@ struct BackupView: View {
     @ViewBuilder
     private func section(_ title: String, _ items: [Backup]) -> some View {
         if !items.isEmpty {
+            // Pinned first, then newest first (Backup.< already encodes this).
             Section(title) {
-                ForEach(items) { backup in
+                ForEach(items.sorted()) { backup in
                     BackupRow(backup: backup, formatter: Self.dateFormatter) {
                         backupToRestore = backup
                         showRestoreConfirm = true
                     } onDelete: {
                         backupManager.delete(backup: backup)
+                    } onTogglePin: {
+                        backupManager.setPinned(backup, !backup.isPinned)
+                    } onRename: { newLabel in
+                        backupManager.rename(backup, to: newLabel)
                     }
                 }
             }
@@ -165,9 +170,14 @@ private struct BackupRow: View {
     let formatter: DateFormatter
     let onRestore: () -> Void
     let onDelete: () -> Void
+    let onTogglePin: () -> Void
+    let onRename: (String) -> Void
 
     @Environment(\.appAccent) private var appAccent
     @State private var isHovered = false
+    @State private var isRenaming = false
+    @State private var draftLabel = ""
+    @FocusState private var renameFocused: Bool
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -183,9 +193,29 @@ private struct BackupRow: View {
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.body)
-                    .lineLimit(1)
+                if isRenaming {
+                    TextField("Label", text: $draftLabel)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body)
+                        .focused($renameFocused)
+                        .onSubmit(commitRename)
+                        .onExitCommand(perform: cancelRename)   // Esc
+                        .onChange(of: renameFocused) { _, focused in
+                            if !focused { commitRename() }       // click-away commits
+                        }
+                } else {
+                    HStack(spacing: 5) {
+                        if backup.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption2)
+                                .foregroundStyle(appAccent)
+                                .help("Pinned — protected from automatic cleanup")
+                        }
+                        Text(title)
+                            .font(.body)
+                            .lineLimit(1)
+                    }
+                }
                 Text(formatter.string(from: backup.date))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -193,23 +223,37 @@ private struct BackupRow: View {
 
             Spacer()
 
-            // Relative age, fading out when the row is hovered to make room.
-            Text(Self.relative.localizedString(for: backup.date, relativeTo: Date()))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .opacity(isHovered ? 0 : 1)
+            if !isRenaming {
+                // Relative age, fading out when the row is hovered to make room.
+                Text(Self.relative.localizedString(for: backup.date, relativeTo: Date()))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .opacity(isHovered ? 0 : 1)
 
-            if isHovered {
-                Button("Restore", action: onRestore)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                if isHovered {
+                    Button(action: onTogglePin) {
+                        Image(systemName: backup.isPinned ? "pin.slash" : "pin")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(backup.isPinned ? "Unpin" : "Pin (protect from cleanup)")
 
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
+                    Button(action: startRename) {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Rename")
+
+                    Button("Restore", action: onRestore)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                    Button(role: .destructive, action: onDelete) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+                    .help("Delete this backup")
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.red)
-                .help("Delete this backup")
             }
         }
         .padding(.vertical, 4)
@@ -218,13 +262,26 @@ private struct BackupRow: View {
         .animation(.easeInOut(duration: 0.12), value: isHovered)
     }
 
-    /// A label if the backup has one, otherwise a human description of its kind.
+    private func startRename() {
+        draftLabel = backup.label
+        isRenaming = true
+        renameFocused = true
+    }
+
+    private func commitRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        let trimmed = draftLabel.trimmingCharacters(in: .whitespaces)
+        if trimmed != backup.label { onRename(trimmed) }
+    }
+
+    private func cancelRename() {
+        isRenaming = false
+    }
+
+    /// The backup's user label, or a human description of its kind when unlabeled.
     private var title: String {
-        let withoutKind = backup.name
-            .replacingOccurrences(of: "^(auto|manual|prerestore)-", with: "", options: .regularExpression)
-        // withoutKind is "yyyy-MM-dd HH-mm-ss optional label"
-        let parts = withoutKind.split(separator: " ", maxSplits: 2)
-        if parts.count > 2 { return String(parts[2]) }
+        if !backup.label.isEmpty { return backup.label }
         switch backup.kind {
         case .manual:     return "Manual backup"
         case .auto:       return "Automatic backup"

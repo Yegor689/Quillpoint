@@ -19,6 +19,7 @@ struct BackupManagerTests {
     final class Fixture {
         let dir: URL
         let storeURL: URL
+        let backupDir: URL
         let container: ModelContainer
         let manager: BackupManager
 
@@ -27,6 +28,7 @@ struct BackupManagerTests {
                 .appendingPathComponent("TTTest-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             storeURL = dir.appendingPathComponent("Test.store")
+            backupDir = dir.appendingPathComponent("Backups", isDirectory: true)
 
             let schema = Schema([Project.self, Task.self])
             container = try ModelContainer(
@@ -37,7 +39,7 @@ struct BackupManagerTests {
             let defaults = UserDefaults(suiteName: suiteName)!
             manager = BackupManager(
                 storeURL: storeURL,
-                backupDir: dir.appendingPathComponent("Backups", isDirectory: true),
+                backupDir: backupDir,
                 defaults: defaults)
             manager.liveContainer = container
         }
@@ -178,5 +180,117 @@ struct BackupManagerTests {
         #expect(f.manager.manualBackups.isEmpty)
         _ = try #require(f.manager.createBackup(label: "first"))
         #expect(f.manager.manualBackups.count == 1)
+    }
+
+    // MARK: - Rename
+
+    @Test func renameChangesLabelKeepingKindAndDate() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup(label: "first"))
+        #expect(backup.label == "first")
+
+        f.manager.rename(backup, to: "Q1 snapshot")
+        let renamed = try #require(f.manager.manualBackups.first)
+        #expect(renamed.label == "Q1 snapshot")
+        #expect(renamed.kind == .manual)
+        #expect(renamed.date == backup.date)          // timestamp preserved
+        #expect(f.manager.manualBackups.count == 1)   // renamed, not duplicated
+    }
+
+    @Test func renameToEmptyClearsLabel() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup(label: "temp"))
+        f.manager.rename(backup, to: "")
+        #expect(f.manager.manualBackups.first?.label == "")
+    }
+
+    @Test func renameSanitizesUnsafeCharacters() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup())
+        f.manager.rename(backup, to: "a/b:c\nd")   // slash, colon, newline stripped
+        let label = try #require(f.manager.manualBackups.first?.label)
+        #expect(!label.contains("/"))
+        #expect(!label.contains(":"))
+        #expect(!label.contains("\n"))
+    }
+
+    // MARK: - Pin
+
+    @Test func pinTogglesAndPersistsInFilename() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup(label: "keep me"))
+        #expect(backup.isPinned == false)
+
+        f.manager.setPinned(backup, true)
+        let pinned = try #require(f.manager.manualBackups.first)
+        #expect(pinned.isPinned)
+        #expect(pinned.name.contains("pin-"))
+        #expect(pinned.label == "keep me")   // pin doesn't disturb the label
+
+        f.manager.setPinned(pinned, false)
+        #expect(f.manager.manualBackups.first?.isPinned == false)
+    }
+
+    @Test func pinnedSortsAboveUnpinned() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        // Plant three auto backups with distinct timestamps; pin the OLDEST.
+        plantAuto(f, "2026-01-01 10-00-00")
+        plantAuto(f, "2026-01-02 10-00-00")
+        let oldPinned = plantAuto(f, "2025-12-01 10-00-00")
+        f.manager.refresh()
+        f.manager.setPinned(try #require(f.manager.autoBackups.first { $0.name.contains(oldPinned) }), true)
+
+        // Sorted() puts the pinned one first even though it's the oldest.
+        #expect(f.manager.autoBackups.sorted().first?.isPinned == true)
+    }
+
+    // MARK: - Prune protection
+
+    @Test func pinnedAutoBackupSurvivesPruning() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        // Plant 12 auto backups (over the keep-10 limit) with distinct timestamps.
+        var names: [String] = []
+        for day in 1...12 {
+            names.append(plantAuto(f, String(format: "2026-01-%02d 10-00-00", day)))
+        }
+        f.manager.refresh()
+        #expect(f.manager.autoBackups.count == 12)
+
+        // Pin the OLDEST (day 1) — it would normally be pruned first.
+        let oldestName = try #require(names.first)
+        let oldest = try #require(f.manager.autoBackups.first { $0.name.contains(oldestName) })
+        f.manager.setPinned(oldest, true)
+
+        // Trigger a prune by making a real auto backup (createAutoBackupIfDue path
+        // isn't public; use the same public trigger the app uses on interval).
+        f.manager.autoBackupIntervalHours = 1
+        f.manager.startAutoBackup()
+
+        // The pinned oldest must still be present even though it's beyond keep-10;
+        // and pruning kept the non-pinned set at the limit (10) plus the pinned one.
+        let survivors = f.manager.autoBackups
+        #expect(survivors.contains { $0.isPinned }, "pinned auto backup was pruned")
+        let unpinnedCount = survivors.filter { !$0.isPinned }.count
+        #expect(unpinnedCount <= BackupManagerTests.maxAutoBackupsForTest)
+    }
+
+    /// Mirror of BackupManager's private maxAutoBackups for assertions.
+    private static let maxAutoBackupsForTest = 10
+
+    /// Plants a valid `.store` auto-backup file with the given "yyyy-MM-dd HH-mm-ss"
+    /// timestamp by snapshotting the live store into a crafted filename. Returns the
+    /// timestamp string (unique substring of the filename) for lookup.
+    @discardableResult
+    private func plantAuto(_ f: Fixture, _ timestamp: String) -> String {
+        let src = f.storeURL
+        let dest = f.backupDir.appendingPathComponent("auto-\(timestamp).store")
+        try? FileManager.default.copyItem(at: src, to: dest)
+        return timestamp
     }
 }
