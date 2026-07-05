@@ -107,7 +107,8 @@ final class TaskStore {
     }
 
     func indentTask(_ task: Task, previousTask: Task?) {
-        guard let parent = previousTask, let project = task.project else { return }
+        guard let parent = previousTask else { return }
+        let project = task.project
         // Re-render the title at the subtask (body) font size so it doesn't stay
         // at the larger top-level (title3) size it was created with.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .body).pointSize)
@@ -131,7 +132,8 @@ final class TaskStore {
     }
 
     func unindentTask(_ task: Task) {
-        guard let parent = task.parent, let project = task.project else { return }
+        guard let parent = task.parent else { return }
+        let project = task.project
         unindentTask(task, fromParent: parent, into: project)
 
         undoManager?.registerUndo(withTarget: self) { [weak parent] store in
@@ -207,10 +209,8 @@ final class TaskStore {
     /// end of the new project's roots. No-op if the task isn't a root, has no current
     /// project, or is already in `newProject`. Undoable.
     func moveTask(_ task: Task, to newProject: Project) {
-        guard task.parent == nil,
-              let oldProject = task.project,
-              oldProject.id != newProject.id
-        else { return }
+        let oldProject = task.project
+        guard task.parent == nil, oldProject.id != newProject.id else { return }
 
         let oldSortIndex = task.sortIndex
         // Snapshot subtasks before reassigning — assigning a subtask's project
@@ -244,7 +244,8 @@ final class TaskStore {
     /// Undo counterpart to moveTask: returns `task` (and subtasks) to `project` and
     /// re-seats it at its previous position among that project's roots.
     private func moveTaskBack(_ task: Task, to project: Project, restoringSortIndex: Int) {
-        guard let current = task.project, current.id != project.id else { return }
+        let current = task.project
+        guard current.id != project.id else { return }
         let subtasks = Array(task.subtasks) // snapshot before mutating relationships
         diagnostics.record("moveTaskBack",
             "task=\(Self.short(task.id)) from=\(Self.short(current.id)) to=\(Self.short(project.id)) subtasks=\(subtasks.count)")
@@ -336,8 +337,7 @@ final class TaskStore {
     }
 
     func deleteTask(_ task: Task) {
-        guard let project = task.project else { return }
-        deleteTask(task, in: project)
+        deleteTask(task, in: task.project)
     }
 
     func deleteTask(_ task: Task, in project: Project) {
@@ -369,7 +369,7 @@ final class TaskStore {
 
     fileprivate func deleteSubtask(_ subtask: Task, from parent: Task) {
         parent.subtasks.removeAll { $0.id == subtask.id }
-        subtask.project?.tasks.removeAll { $0.id == subtask.id }
+        subtask.project.tasks.removeAll { $0.id == subtask.id }
         context.delete(subtask)
     }
 

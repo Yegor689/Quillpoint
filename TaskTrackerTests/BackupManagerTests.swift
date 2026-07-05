@@ -78,7 +78,7 @@ struct BackupManagerTests {
             sortIndex = t.sortIndex
             completedAt = t.completedAt
             reminderDate = t.reminderDate
-            projectID = t.project?.id
+            projectID = t.project.id
             parentID = t.parent?.id
         }
     }

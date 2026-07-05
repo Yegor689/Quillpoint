@@ -4,81 +4,63 @@ import UniformTypeIdentifiers
 
 @main
 struct TaskTrackerApp: App {
-    let container: ModelContainer
-    let projectStore: ProjectStore
-    let taskStore: TaskStore
+    private let storeURL = URL.applicationSupportDirectory
+        .appending(component: "TaskTracker.store")
+
+    // Populated only when the store opens successfully. On failure these stay nil
+    // and the scene shows RecoveryView instead (the store is quarantined, not lost).
+    let container: ModelContainer?
+    let projectStore: ProjectStore?
+    let taskStore: TaskStore?
+    let reminderManager: ReminderManager?
+    // BackupManager exists regardless — it's needed to take the pre-migration backup
+    // before the container opens, and to drive recovery.
     let backupManager: BackupManager
-    let reminderManager: ReminderManager
     let settings = AppSettings()
 
+    /// The result of bringing up the store. Drives whether the app shows its normal
+    /// UI or the recovery screen.
+    @State private var bringUp: PersistenceController.State
+
     init() {
-        let schema = Schema([Project.self, Task.self])
-        let storeURL = URL.applicationSupportDirectory
-            .appending(component: "TaskTracker.store")
-        let config = ModelConfiguration(schema: schema, url: storeURL)
+        let backupManager = BackupManager(storeURL: storeURL)
+        self.backupManager = backupManager
 
-        do {
-            container = try ModelContainer(for: schema, configurations: config)
-        } catch {
-            try? FileManager.default.removeItem(at: storeURL)
-            do {
-                container = try ModelContainer(for: schema, configurations: config)
-            } catch {
-                fatalError("Failed to create ModelContainer: \(error)")
-            }
+        let state = PersistenceController.bringUp(
+            storeURL: storeURL,
+            schema: QuillpointSchema.current,
+            migrationPlan: QuillpointMigrationPlan.self,
+            backupManager: backupManager)
+        _bringUp = State(initialValue: state)
+
+        switch state {
+        case .ready(let container):
+            self.container = container
+            let taskStore = TaskStore(context: container.mainContext)
+            self.taskStore = taskStore
+            projectStore = ProjectStore(context: container.mainContext)
+            reminderManager = ReminderManager()
+            backupManager.liveContainer = container
+            taskStore.backfillSortIndicesIfNeeded()
+            backupManager.startAutoBackup()
+        case .failed:
+            container = nil
+            taskStore = nil
+            projectStore = nil
+            reminderManager = nil
         }
-
-        projectStore    = ProjectStore(context: container.mainContext)
-        taskStore       = TaskStore(context: container.mainContext)
-        backupManager   = BackupManager(storeURL: storeURL)
-        backupManager.liveContainer = container
-        reminderManager = ReminderManager()
-        taskStore.backfillSortIndicesIfNeeded()
-        backupManager.startAutoBackup()
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(projectStore)
-                .environment(taskStore)
-                .environment(backupManager)
-                .environment(reminderManager)
-                .environment(settings)
-                .tint(settings.accent.color)
-                .environment(\.appAccent, settings.accent.color)
-                .frame(minWidth: 720, minHeight: 480)
-                .onAppear {
-                    setApplicationIcon()
-                    settings.applyAppearance()
-                    clearExpiredReminders()
-                    applyDefaultFilter()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .markTaskDone)) { note in
-                    guard let idStr = note.object as? String,
-                          let uuid  = UUID(uuidString: idStr) else { return }
-                    // Find the task by ID and mark it done through the store so it's undoable.
-                    let descriptor = FetchDescriptor<Task>(
-                        predicate: #Predicate { $0.id == uuid }
-                    )
-                    if let task = try? container.mainContext.fetch(descriptor).first {
-                        taskStore.completeTask(task)
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .reminderFired)) { note in
-                    guard let idStr = note.object as? String,
-                          let uuid  = UUID(uuidString: idStr) else { return }
-                    // The reminder fired; clear its date so the UI stops showing it.
-                    let descriptor = FetchDescriptor<Task>(
-                        predicate: #Predicate { $0.id == uuid }
-                    )
-                    if let task = try? container.mainContext.fetch(descriptor).first {
-                        task.reminderDate = nil
-                    }
-                }
+            switch bringUp {
+            case .ready:
+                readyView
+            case .failed(let reason, let quarantineURL):
+                RecoveryView(reason: reason, quarantineURL: quarantineURL, onRetry: retryBringUp)
+            }
         }
         .defaultSize(width: 960, height: 620)
-        .modelContainer(container)
         .commands {
             // App (Quillpoint) menu: backups, data export/import, and diagnostics.
             CommandGroup(after: .appSettings) {
@@ -98,6 +80,63 @@ struct TaskTrackerApp: App {
                 .tint(settings.accent.color)
                 .environment(\.appAccent, settings.accent.color)
         }
+    }
+
+    /// The normal app UI. Only built when bring-up succeeded, so the force-unwraps
+    /// here are safe — `.ready` implies all of these are populated.
+    @ViewBuilder
+    private var readyView: some View {
+        let container = container!
+        let taskStore = taskStore!
+        ContentView()
+            .modelContainer(container)
+            .environment(projectStore!)
+            .environment(taskStore)
+            .environment(backupManager)
+            .environment(reminderManager!)
+            .environment(settings)
+            .tint(settings.accent.color)
+            .environment(\.appAccent, settings.accent.color)
+            .frame(minWidth: 720, minHeight: 480)
+            .onAppear {
+                setApplicationIcon()
+                settings.applyAppearance()
+                clearExpiredReminders()
+                applyDefaultFilter()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .markTaskDone)) { note in
+                guard let idStr = note.object as? String,
+                      let uuid  = UUID(uuidString: idStr) else { return }
+                // Find the task by ID and mark it done through the store so it's undoable.
+                let descriptor = FetchDescriptor<Task>(
+                    predicate: #Predicate { $0.id == uuid }
+                )
+                if let task = try? container.mainContext.fetch(descriptor).first {
+                    taskStore.completeTask(task)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .reminderFired)) { note in
+                guard let idStr = note.object as? String,
+                      let uuid  = UUID(uuidString: idStr) else { return }
+                // The reminder fired; clear its date so the UI stops showing it.
+                let descriptor = FetchDescriptor<Task>(
+                    predicate: #Predicate { $0.id == uuid }
+                )
+                if let task = try? container.mainContext.fetch(descriptor).first {
+                    task.reminderDate = nil
+                }
+            }
+    }
+
+    /// Re-attempts bring-up (the recovery screen's "Try Again"). If it now succeeds,
+    /// the switch in `body` renders the normal UI. A relaunch is still the cleanest
+    /// path, but retrying in place covers transient failures.
+    private func retryBringUp() {
+        bringUp = PersistenceController.bringUp(
+            storeURL: storeURL,
+            schema: QuillpointSchema.current,
+            migrationPlan: QuillpointMigrationPlan.self,
+            backupManager: backupManager)
     }
 
     /// Ensure the About panel shows the real app icon. macOS loads the icon from
@@ -122,6 +161,7 @@ struct TaskTrackerApp: App {
     /// Exports all projects and tasks to a user-chosen JSON file — a portable,
     /// human-readable copy of everything in the app. Read-only; never mutates data.
     private func exportData() {
+        guard let container else { return }
         guard let data = try? DataExportManager.json(from: container.mainContext) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -136,6 +176,7 @@ struct TaskTrackerApp: App {
     /// user whether to merge or replace, takes a safety backup, then applies. The
     /// destructive parts only run after explicit confirmation.
     private func importData() {
+        guard let container else { return }
         let open = NSOpenPanel()
         open.allowedContentTypes = [.json]
         open.allowsMultipleSelection = false
@@ -201,6 +242,7 @@ struct TaskTrackerApp: App {
     /// Clears reminders whose time has already passed (e.g. fired or were missed while the app was closed)
     /// so the UI never shows a stale past reminder.
     private func clearExpiredReminders() {
+        guard let container, let reminderManager else { return }
         let now = Date()
         let descriptor = FetchDescriptor<Task>(
             predicate: #Predicate { $0.reminderDate != nil && $0.reminderDate! < now }
