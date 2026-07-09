@@ -39,21 +39,9 @@ enum WhatsNew {
     /// Highlights for the current release. Re-author this list each version.
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
-            icon: "shippingbox.and.arrow.backward",
-            title: "Safer than ever",
-            detail: "Your data is now protected across app updates. If a file ever can't be opened, it's set aside for recovery instead of being lost — and a backup is taken automatically before any upgrade."),
-        WhatsNewItem(
-            icon: "arrow.left.arrow.right",
-            title: "Reliable move between projects",
-            detail: "Fixed a rare issue where moving a task with subtasks to another project could make it disappear."),
-        WhatsNewItem(
-            icon: "pin.fill",
-            title: "Pin & rename backups",
-            detail: "Give backups meaningful names and pin the ones you want to keep — pinned backups are protected from automatic cleanup and grouped at the top."),
-        WhatsNewItem(
-            icon: "checklist",
-            title: "Smarter subtasks",
-            detail: "Completing every subtask now completes its parent automatically, the Active filter hides finished subtasks, and pressing Return at the start of a subtask inserts one above it."),
+            icon: "clock.arrow.circlepath",
+            title: "Restore from the recovery screen",
+            detail: "If Quillpoint ever can't open your data, you can now restore any of your backups right from the recovery screen — no more being stuck. Your current data is set aside (never deleted) before the backup is restored."),
     ]
 }
 
