@@ -110,7 +110,7 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 | `ProjectListView` | Sidebar list of projects plus an "All Projects" entry at the top |
 | `SettingsView` | Settings window (appearance + behavior), opened via ⌘, |
 | `BackupView` | Backup management sheet — view, create, restore, rename, and pin; opened from the Backups menu command |
-| `RecoveryView` | Shown at the scene root when the store fails to open. Leaves data in place; offers Try Again, Export Diagnostics, and a confirmed Start Fresh |
+| `RecoveryView` | Shown at the scene root when the store fails to open. Leaves data in place; offers Try Again and a unified **Restore Data** picker (backups, previously set-aside/Quarantine stores, and a JSON export in one sheet), plus Export Diagnostics and a confirmed Start Fresh. The picker hides sources this build can't open (cheap `PersistenceController.looksOpenable` filter, with an "N hidden" note) and fully trial-opens (`canOpen`) the selected one before touching the live store, warning instead of stranding the user. A store written by a newer build shows a distinct "update to open" variant |
 | `WhatsNewView` | Per-version highlights, shown once after an update and via Help → What's New |
 | `ReminderPopover` / `ReminderToast` | Reminder date/time picker and the in-app banner shown when one fires |
 
@@ -120,7 +120,7 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 |------|---------|
 | `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration |
 | `ProjectStore` | Project mutations |
-| `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store via SQLite's online backup API (consistent even with uncommitted WAL data); restores in place by rewriting the live store from the snapshot, keeping a single rolling pre-restore safety backup |
+| `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store via SQLite's online backup API (consistent even with uncommitted WAL data); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
 | `ReminderManager` | Schedules local notifications and handles their actions |
 | `AppSettings` | Persisted user preferences (theme, accent, defaults), surfaced in Settings |
 
@@ -128,5 +128,5 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 
 | Type | Purpose |
 |------|---------|
-| `PersistenceController` | Owns store bring-up: takes a pre-migration backup, opens the container with the migration plan, and on failure LEAVES the store in place and reports `.failed` (never auto-moves or deletes). `startFresh(storeURL:)` moves the store to a Quarantine folder only on an explicit, confirmed user action |
+| `PersistenceController` | Owns store bring-up: takes a pre-migration backup, opens the container with the migration plan, and on failure LEAVES the store in place and reports `.failed` (never auto-moves or deletes). A **downgrade guard** refuses to open a store recorded as a newer schema version than this build knows (`onDiskVersion` vs `QuillpointSchema.newestKnownVersion`), so an older build can't silently rewrite a newer store. `startFresh(storeURL:)` moves the store to a Quarantine folder only on an explicit, confirmed user action; `quarantinedStores(storeURL:)` lists those for the recovery picker. `looksOpenable` (cheap metadata check) and `canOpen` (full trial-open on a copy) back the recovery picker's filtering and final guard |
 | `QuillpointSchema` / `QuillpointMigrationPlan` | The current schema (latest `VersionedSchema`) and the ordered migration stages. `SchemaV1` (frozen, in `SchemaV1Models`) must match the shape shipped in 1.0.x exactly; `SchemaV2` makes `Task.project` non-optional with a custom stage that backfills orphans via `ProjectBackfill` |

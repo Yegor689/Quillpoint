@@ -34,11 +34,10 @@ gone.
   or an All Projects view grouped by project or priority when you're planning.
 - **Reminders that reach you.** Attach a date and time to any task and get a
   native macOS notification with a "Mark Done" action built in.
-- **Yours to keep.** Full undo/redo, and automatic backups on a schedule you
-  choose — name them, pin the ones that matter, and restore in one click (always
-  backing up your current state first). Export everything to JSON and import it
-  back. Updates migrate your data safely, and if anything ever goes wrong your
-  data is left untouched with a clear path to recover it.
+- **Yours to keep.** Full undo/redo, scheduled backups you can name and pin, and
+  JSON export/import. Updates migrate your data safely — and if it ever won't
+  open, a recovery screen restores it from a backup or JSON without touching
+  what's there.
 
 ## Requirements
 
