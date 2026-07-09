@@ -73,8 +73,10 @@ struct TaskTrackerApp: App {
                     return "The app couldn't finish starting up."
                 }()
                 RecoveryView(reason: reason,
+                             backupManager: backupManager,
                              onRetry: retryBringUp,
-                             onStartFresh: startFresh)
+                             onStartFresh: startFresh,
+                             onRestore: restoreFromBackup)
             }
         }
         .defaultSize(width: 960, height: 620)
@@ -169,6 +171,19 @@ struct TaskTrackerApp: App {
             backupManager: backupManager)
         bringUp = state
         services = Self.buildServices(from: state, backupManager: backupManager)
+    }
+
+    /// "Restore from Backup" (recovery screen): replaces the unreadable store with the
+    /// chosen backup on disk (the current store is set aside in Quarantine, not deleted),
+    /// then re-runs bring-up so the restored store opens (migrating forward if older).
+    private func restoreFromBackup(_ backup: Backup) {
+        do {
+            try backupManager.restoreFromFile(backup: backup)
+        } catch {
+            DiagnosticLog.shared.record("recovery-restore-failed", String(describing: error))
+        }
+        backupManager.refresh()
+        retryBringUp()
     }
 
     /// "Start Fresh": an EXPLICIT, confirmed choice to set the unreadable store aside
