@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import CoreData
 
 /// Owns SwiftData container bring-up so the app never loses data on a failed open
 /// or migration. The original inline path deleted the store and started empty on any
@@ -20,6 +21,10 @@ enum PersistenceController {
         case failed(reason: String, storeURL: URL)
     }
 
+    /// Prefix on the `.failed` reason when the store was written by a newer build. The
+    /// recovery UI could branch on this later; for now it just makes the log clear.
+    static let downgradeReasonPrefix = "This data was created by a newer version of Quillpoint."
+
     /// Attempts to open the store, taking a pre-migration backup when needed. On
     /// failure the store is left untouched and `.failed` is returned — nothing is
     /// moved or deleted, so a retry (or a later fixed build) can still read it.
@@ -28,6 +33,19 @@ enum PersistenceController {
                         migrationPlan: (any SchemaMigrationPlan.Type)?,
                         backupManager: BackupManager? = nil) -> State {
         let config = ModelConfiguration(schema: schema, url: storeURL)
+
+        // Downgrade guard: if the store on disk was written by a NEWER build of
+        // Quillpoint than this one, refuse to open it. There is no downgrade migration,
+        // so opening it would let this older build silently rewrite a newer store in the
+        // old shape (the root cause of the 2026-07 corruption). Fail into recovery
+        // instead — the data is left completely untouched.
+        if let storeVersion = onDiskVersion(storeURL: storeURL),
+           storeVersion > QuillpointSchema.newestKnownVersion {
+            let reason = "\(downgradeReasonPrefix) The data is version \(storeVersion.description), "
+                + "but this build only understands up to \(QuillpointSchema.newestKnownVersion.description). "
+                + "Update Quillpoint to open it. Your data has been left untouched."
+            return .failed(reason: reason, storeURL: storeURL)
+        }
 
         // Safety backup before a migration mutates the store.
         if let backupManager,
@@ -81,6 +99,32 @@ enum PersistenceController {
             try? fm.moveItem(at: side, to: sideDest)
         }
         return dest
+    }
+
+    /// Reads the schema version recorded in the store's metadata WITHOUT opening it
+    /// through SwiftData (which is exactly what may fail). SwiftData/Core Data writes
+    /// the writing schema's version identifier into the store's `NSStoreModelVersionIdentifiers`
+    /// metadata key; we return the largest one found, or nil if the store is absent or
+    /// unreadable (in which case the normal open path handles it). Never throws.
+    nonisolated static func onDiskVersion(storeURL: URL) -> Schema.Version? {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return nil }
+        guard let metadata = try? NSPersistentStoreCoordinator.metadataForPersistentStore(
+            type: .sqlite, at: storeURL)
+        else { return nil }
+
+        guard let identifiers = metadata[NSStoreModelVersionIdentifiersKey] as? [String]
+        else { return nil }
+
+        // Identifiers look like "2.0.0"; parse and take the max.
+        return identifiers.compactMap(Self.parseVersion).max()
+    }
+
+    /// Parses a "major.minor.patch" identifier into a `Schema.Version`. Returns nil for
+    /// anything that doesn't have three numeric components.
+    nonisolated private static func parseVersion(_ s: String) -> Schema.Version? {
+        let parts = s.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return Schema.Version(parts[0], parts[1], parts[2])
     }
 
     private static func timestamp() -> String {

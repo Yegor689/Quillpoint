@@ -76,7 +76,8 @@ struct TaskTrackerApp: App {
                              backupManager: backupManager,
                              onRetry: retryBringUp,
                              onStartFresh: startFresh,
-                             onRestore: restoreFromBackup)
+                             onRestore: restoreFromBackup,
+                             onRestoreJSON: restoreFromJSON)
             }
         }
         .defaultSize(width: 960, height: 620)
@@ -184,6 +185,44 @@ struct TaskTrackerApp: App {
         }
         backupManager.refresh()
         retryBringUp()
+    }
+
+    /// "Restore from JSON" (recovery screen): rebuilds the store from a JSON export.
+    /// A JSON export is schema-independent (just projects and tasks as data), so it's a
+    /// recovery path that survives store corruption a `.store` backup might share.
+    ///
+    /// Validates the file first (a bad file changes nothing), then sets the unreadable
+    /// store aside (Quarantine, never deleted), brings up a FRESH empty store, and
+    /// imports the file into it with `.replace`. If anything fails the store is left as
+    /// it was and recovery stays on screen.
+    private func restoreFromJSON() {
+        let open = NSOpenPanel()
+        open.allowedContentTypes = [.json]
+        open.allowsMultipleSelection = false
+        open.title = "Restore from JSON Export"
+        guard open.runModal() == .OK, let url = open.url else { return }
+
+        guard let data = try? Data(contentsOf: url) else {
+            return showImportError(DataExportManager.ImportError.unreadable)
+        }
+        // Validate BEFORE touching the store, so a bad file is a no-op.
+        do { _ = try DataExportManager.validate(data) }
+        catch { return showImportError(error) }
+
+        // Set the unreadable store aside and bring up a clean empty one to import into.
+        PersistenceController.startFresh(storeURL: storeURL)
+        backupManager.refresh()
+        retryBringUp()
+        guard let container = services?.container else {
+            // The fresh store didn't open — nothing was imported; recovery remains.
+            return showImportError(DataExportManager.ImportError.unreadable)
+        }
+
+        do {
+            try DataExportManager.importing(data, into: container.mainContext, mode: .replace)
+        } catch {
+            showImportError(error)
+        }
     }
 
     /// "Start Fresh": an EXPLICIT, confirmed choice to set the unreadable store aside

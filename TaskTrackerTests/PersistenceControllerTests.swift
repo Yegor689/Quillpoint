@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import SwiftData
+import CoreData
 @testable import Quillpoint
 
 /// Tests the store bring-up safety net: a healthy store opens `.ready`, and a
@@ -59,6 +60,82 @@ struct PersistenceControllerTests {
         // No Quarantine folder is created automatically.
         let quarantineDir = storeURL.deletingLastPathComponent().appending(component: "Quarantine")
         #expect(FileManager.default.fileExists(atPath: quarantineDir.path) == false)
+    }
+
+    // MARK: - Downgrade guard
+
+    /// A store written by a NEWER build (higher schema version than this build knows)
+    /// must be REFUSED — not opened, not migrated, not touched — so an older build can
+    /// never silently rewrite a newer store in the old shape.
+    @Test func storeFromNewerBuildIsRefusedAndLeftUntouched() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+
+        // Create a normal store, then stamp its recorded version to one NEWER than any
+        // this build understands (2.0.0 → 99.0.0), simulating a future build's store.
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: storeURL))
+            _ = c // opened & created the file with its real metadata
+        }
+        try bumpRecordedVersion(of: storeURL, to: "99.0.0")
+
+        // Sanity: the guard's reader sees the bumped version.
+        let seen = PersistenceController.onDiskVersion(storeURL: storeURL)
+        #expect(seen == Schema.Version(99, 0, 0))
+
+        let before = try Data(contentsOf: storeURL)
+        let state = PersistenceController.bringUp(
+            storeURL: storeURL,
+            schema: QuillpointSchema.current,
+            migrationPlan: QuillpointMigrationPlan.self)
+
+        guard case .failed(let reason, let reportedURL) = state else {
+            Issue.record("expected .failed (downgrade guard), got \(state)")
+            return
+        }
+        #expect(reason.hasPrefix(PersistenceController.downgradeReasonPrefix))
+        #expect(reportedURL == storeURL)
+        // Untouched: still there, byte-for-byte, not quarantined.
+        #expect(FileManager.default.fileExists(atPath: storeURL.path))
+        #expect(try Data(contentsOf: storeURL) == before, "guard must not modify the store")
+        let quarantineDir = storeURL.deletingLastPathComponent().appending(component: "Quarantine")
+        #expect(FileManager.default.fileExists(atPath: quarantineDir.path) == false)
+    }
+
+    /// A store at the CURRENT version opens normally — the guard only trips on newer.
+    @Test func storeAtCurrentVersionOpensNormally() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: storeURL))
+            _ = c
+        }
+        // onDiskVersion should read the current (2.0.0) version, which is not > newest.
+        let seen = PersistenceController.onDiskVersion(storeURL: storeURL)
+        #expect(seen == QuillpointSchema.newestKnownVersion)
+
+        let state = PersistenceController.bringUp(
+            storeURL: storeURL,
+            schema: QuillpointSchema.current,
+            migrationPlan: QuillpointMigrationPlan.self)
+        guard case .ready = state else {
+            Issue.record("expected .ready for current-version store, got \(state)")
+            return
+        }
+    }
+
+    /// Rewrites the store's recorded `NSStoreModelVersionIdentifiers` to `version`,
+    /// without opening it through SwiftData — mimics a store written by another build.
+    private func bumpRecordedVersion(of storeURL: URL, to version: String) throws {
+        var metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+            type: .sqlite, at: storeURL)
+        metadata[NSStoreModelVersionIdentifiersKey] = [version]
+        try NSPersistentStoreCoordinator.setMetadata(
+            metadata, forPersistentStoreOfType: NSSQLiteStoreType, at: storeURL)
     }
 
     @Test func startFreshQuarantinesStoreNeverDeletes() throws {

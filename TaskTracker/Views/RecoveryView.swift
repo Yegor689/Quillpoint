@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 ///     (recoverable) and starts empty.
 ///   • "Restore from Backup" replaces the store with a chosen backup (the current
 ///     store is set aside in Quarantine first, so it's reversible), then reopens.
+///   • "Restore from JSON" rebuilds the store from a JSON export — a schema-independent
+///     recovery path that survives store corruption a `.store` backup might share.
 /// This avoids the trap where retrying silently opened a blank store.
 struct RecoveryView: View {
     let reason: String
@@ -18,24 +20,38 @@ struct RecoveryView: View {
     let onStartFresh: () -> Void
     /// Restores the given backup by replacing the store, then re-attempts bring-up.
     let onRestore: (Backup) -> Void
+    /// Rebuilds the store from a JSON export (schema-independent recovery path).
+    let onRestoreJSON: () -> Void
 
     @State private var showDetails = false
     @State private var confirmStartFresh = false
     @State private var showBackupPicker = false
 
+    /// True when the store was written by a NEWER build of Quillpoint. The advice
+    /// differs: Try Again won't help (the data really is newer) — the fix is to update
+    /// the app, and Start Fresh would needlessly set aside good data.
+    private var isDowngrade: Bool {
+        reason.hasPrefix(PersistenceController.downgradeReasonPrefix)
+    }
+
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.shield")
+            Image(systemName: isDowngrade ? "arrow.up.circle" : "exclamationmark.shield")
                 .font(.system(size: 44))
-                .foregroundStyle(.orange)
+                .foregroundStyle(isDowngrade ? .blue : .orange)
 
-            Text("Quillpoint couldn't open your data")
+            Text(isDowngrade
+                 ? "This data was made by a newer Quillpoint"
+                 : "Quillpoint couldn't open your data")
                 .font(.title2.bold())
+                .multilineTextAlignment(.center)
 
             VStack(spacing: 6) {
                 Text("Your data has not been lost.")
                     .fontWeight(.medium)
-                Text("It's still on your Mac, untouched. This often happens after an update — installing the latest version of Quillpoint and choosing Try Again usually fixes it. If you're stuck, export diagnostics and reach out before starting fresh.")
+                Text(isDowngrade
+                     ? "This copy of your data was created by a newer version of Quillpoint, and this older version can't open it safely. Update Quillpoint to the latest version, then reopen — your data is untouched. Don't Start Fresh; that would set this data aside."
+                     : "It's still on your Mac, untouched. This often happens after an update — installing the latest version of Quillpoint and choosing Try Again usually fixes it. If you're stuck, export diagnostics and reach out before starting fresh.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }
@@ -47,8 +63,11 @@ struct RecoveryView: View {
                 if !backupManager.backups.isEmpty {
                     Button("Restore from Backup…") { showBackupPicker = true }
                 }
-                Button("Export Diagnostics…", action: exportDiagnostics)
+                Button("Restore from JSON…", action: onRestoreJSON)
             }
+
+            Button("Export Diagnostics…", action: exportDiagnostics)
+                .buttonStyle(.borderless)
 
             // Destructive, de-emphasized, and confirmed — never a one-click blank start.
             Button("Start Fresh…", role: .destructive) { confirmStartFresh = true }

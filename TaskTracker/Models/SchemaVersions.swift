@@ -29,6 +29,13 @@ enum SchemaV2: VersionedSchema {
 /// Entry point the app and backups build their `Schema` from — always the latest.
 enum QuillpointSchema {
     static var current: Schema { Schema(versionedSchema: SchemaV2.self) }
+
+    /// The newest schema version this build understands. A store recorded with a
+    /// version GREATER than this was written by a newer build of Quillpoint, and this
+    /// build must NOT open it (there is no downgrade migration — opening it would let
+    /// an older build silently rewrite a newer store in the old shape). Used by the
+    /// downgrade guard in `PersistenceController`.
+    static var newestKnownVersion: Schema.Version { SchemaV2.versionIdentifier }
 }
 
 /// Maps older on-disk schema versions forward. One stage per breaking change.
