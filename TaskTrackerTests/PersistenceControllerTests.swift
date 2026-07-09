@@ -128,6 +128,96 @@ struct PersistenceControllerTests {
         }
     }
 
+    // MARK: - Quarantine listing (recovery-screen restore source)
+
+    /// A store set aside by startFresh shows up in `quarantinedStores`, so the recovery
+    /// screen can offer it for restore — making "recoverable later" real.
+    @Test func startFreshStoreIsListedAsQuarantined() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+        try Data("not a database".utf8).write(to: storeURL)
+
+        #expect(PersistenceController.quarantinedStores(storeURL: storeURL).isEmpty)
+
+        PersistenceController.startFresh(storeURL: storeURL)
+
+        let listed = PersistenceController.quarantinedStores(storeURL: storeURL)
+        #expect(listed.count == 1)
+        #expect(listed.first?.url.pathExtension == "store")
+        #expect(listed.first?.url.path.contains("Quarantine") == true)
+    }
+
+    /// Multiple set-aside stores are listed newest-first.
+    @Test func quarantinedStoresSortedNewestFirst() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+        let qDir = storeURL.deletingLastPathComponent().appending(component: "Quarantine")
+        try FileManager.default.createDirectory(at: qDir, withIntermediateDirectories: true)
+
+        let older = qDir.appending(component: "TaskTracker-2020-01-01 00-00-00.store")
+        let newer = qDir.appending(component: "TaskTracker-2025-01-01 00-00-00.store")
+        try Data("a".utf8).write(to: older)
+        try Data("b".utf8).write(to: newer)
+        // Stamp modification dates so ordering is deterministic.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 0)], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: newer.path)
+
+        let listed = PersistenceController.quarantinedStores(storeURL: storeURL)
+        #expect(listed.count == 2)
+        #expect(listed.first?.url.lastPathComponent == newer.lastPathComponent)
+    }
+
+    /// `canOpen` probes a real open: a valid current store passes, a corrupt file fails.
+    /// This is what the recovery picker uses to hide dead set-aside stores.
+    @Test func canOpenAcceptsValidStoreAndRejectsCorrupt() throws {
+        let tmp = TempDir()
+        let good = tmp.store("good.store")
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: good))
+            _ = c
+        }
+        #expect(PersistenceController.canOpen(storeURL: good) == true)
+
+        let bad = tmp.store("bad.store")
+        try Data("not a database".utf8).write(to: bad)
+        #expect(PersistenceController.canOpen(storeURL: bad) == false)
+
+        let missing = tmp.store("missing.store")
+        #expect(PersistenceController.canOpen(storeURL: missing) == false)
+    }
+
+    /// `looksOpenable` (the cheap list pre-filter): accepts a valid current store,
+    /// rejects a corrupt file and a store recorded as a newer version — without a full
+    /// migration open.
+    @Test func looksOpenableFiltersCorruptAndNewer() throws {
+        let tmp = TempDir()
+
+        let good = tmp.store("good.store")
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: good))
+            _ = c
+        }
+        #expect(PersistenceController.looksOpenable(storeURL: good) == true)
+
+        let corrupt = tmp.store("corrupt.store")
+        try Data("not a database".utf8).write(to: corrupt)
+        #expect(PersistenceController.looksOpenable(storeURL: corrupt) == false)
+
+        let newer = tmp.store("newer.store")
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: newer))
+            _ = c
+        }
+        try bumpRecordedVersion(of: newer, to: "99.0.0")
+        #expect(PersistenceController.looksOpenable(storeURL: newer) == false)
+    }
+
     /// Rewrites the store's recorded `NSStoreModelVersionIdentifiers` to `version`,
     /// without opening it through SwiftData — mimics a store written by another build.
     private func bumpRecordedVersion(of storeURL: URL, to version: String) throws {

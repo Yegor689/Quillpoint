@@ -339,18 +339,26 @@ final class BackupManager {
     /// this is reversible. After it returns, the caller re-runs bring-up, which opens
     /// the restored store (migrating it forward through the plan if it's older).
     func restoreFromFile(backup: Backup) throws {
+        try restoreStoreFile(at: backup.url)
+    }
+
+    /// Restores any `.store` file (a backup OR a quarantined store) by REPLACING the
+    /// live store on disk. The current (unreadable) store is moved to Quarantine first,
+    /// never deleted, so this is reversible. After it returns, the caller re-runs
+    /// bring-up, which opens the restored store (migrating forward if older).
+    func restoreStoreFile(at sourceURL: URL) throws {
         let fm = FileManager.default
 
         // Set the current store aside (recoverable), clearing the destination so the
         // copy lands cleanly. Reuses the same Quarantine location as "Start Fresh".
         PersistenceController.startFresh(storeURL: storeURL)
 
-        // Copy the backup into place as the new live store. Sidecars normally don't
+        // Copy the source into place as the new live store. Sidecars normally don't
         // exist (the online backup writes a single self-contained file), but copy any
         // that do so the restored store is consistent.
-        try fm.copyItem(at: backup.url, to: storeURL)
+        try fm.copyItem(at: sourceURL, to: storeURL)
         for ext in ["wal", "shm"] {
-            let side = backup.url.appendingPathExtension(ext)
+            let side = sourceURL.appendingPathExtension(ext)
             if fm.fileExists(atPath: side.path) {
                 try? fm.copyItem(at: side, to: storeURL.appendingPathExtension(ext))
             }

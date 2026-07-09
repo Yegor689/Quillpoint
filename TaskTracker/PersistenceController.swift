@@ -101,6 +101,84 @@ enum PersistenceController {
         return dest
     }
 
+    /// A store previously set aside in the Quarantine folder (by Start Fresh or by a
+    /// restore), which the recovery screen can offer to restore — closing the loop on
+    /// the "your data can be recovered later" promise.
+    struct QuarantinedStore: Identifiable {
+        let id = UUID()
+        let url: URL
+        let date: Date
+    }
+
+    /// A CHEAP openability pre-check for list filtering: is this a valid SQLite/SwiftData
+    /// store whose recorded version this build understands? Reads metadata only (no copy,
+    /// no migration open), so it's fast enough to run over a whole backup folder. Catches
+    /// the common dead cases — corrupt files (metadata unreadable) and stores from a newer
+    /// build (version > newest). It can't detect an old-shape store that will fail
+    /// migration; the lazy `canOpen` probe on the selected store is the final guard.
+    nonisolated static func looksOpenable(storeURL: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return false }
+        guard (try? NSPersistentStoreCoordinator.metadataForPersistentStore(
+            type: .sqlite, at: storeURL)) != nil
+        else { return false }  // not a valid store (corrupt / not SQLite)
+        // If it records a version, it must not be newer than this build understands.
+        if let v = onDiskVersion(storeURL: storeURL), v > QuillpointSchema.newestKnownVersion { return false }
+        return true
+    }
+
+    /// Trial-opens a `.store` file through the current schema + migration plan on a
+    /// throwaway COPY (the original is never touched) to decide whether it can actually
+    /// be restored. Returns false for corrupt files and for old-shape stores that would
+    /// fail migration. This is the only reliable check — a store's metadata can look
+    /// valid yet still fail to migrate. Used as the lazy final guard on the selected
+    /// store; `looksOpenable` is the cheap pre-filter for lists.
+    @MainActor
+    static func canOpen(storeURL: URL) -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: storeURL.path) else { return false }
+        let tmp = fm.temporaryDirectory.appending(component: "probe-\(UUID().uuidString).store")
+        defer { for e in ["", "-wal", "-shm"] { try? fm.removeItem(at: URL(fileURLWithPath: tmp.path + e)) } }
+        do {
+            try fm.copyItem(at: storeURL, to: tmp)
+            for ext in ["wal", "shm"] {
+                let side = storeURL.appendingPathExtension(ext)
+                if fm.fileExists(atPath: side.path) { try? fm.copyItem(at: side, to: tmp.appendingPathExtension(ext)) }
+            }
+            _ = try ModelContainer(
+                for: QuillpointSchema.current,
+                migrationPlan: QuillpointMigrationPlan.self,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: tmp))
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Lists stores in the Quarantine folder next to `storeURL`, newest first. These are
+    /// full `.store` files set aside on Start Fresh / restore; each can be restored via
+    /// `BackupManager.restoreStoreFile(at:)`. Returns [] if the folder doesn't exist.
+    /// Lists stores in the Quarantine folder next to `storeURL`, newest first. Returns []
+    /// if the folder doesn't exist. Openability isn't checked here — it's probed lazily
+    /// with `canOpen` only for the ONE store the user selects to restore, so the recovery
+    /// screen doesn't trial-open a whole folder up front.
+    nonisolated static func quarantinedStores(storeURL: URL) -> [QuarantinedStore] {
+        let fm = FileManager.default
+        let dir = storeURL.deletingLastPathComponent()
+            .appending(component: "Quarantine", directoryHint: .isDirectory)
+        guard let entries = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return [] }
+
+        return entries
+            .filter { $0.pathExtension == "store" }
+            .map { url in
+                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                return QuarantinedStore(url: url, date: date)
+            }
+            .sorted { $0.date > $1.date }
+    }
+
     /// Reads the schema version recorded in the store's metadata WITHOUT opening it
     /// through SwiftData (which is exactly what may fail). SwiftData/Core Data writes
     /// the writing schema's version identifier into the store's `NSStoreModelVersionIdentifiers`

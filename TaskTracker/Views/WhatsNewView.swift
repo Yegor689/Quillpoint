@@ -40,8 +40,8 @@ enum WhatsNew {
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
             icon: "clock.arrow.circlepath",
-            title: "Restore from a backup when data won't open",
-            detail: "If Quillpoint ever can't open your data, you can now restore any of your backups right from the recovery screen — no more being stuck. Your current data is set aside (never deleted) first."),
+            title: "Restore your data when it won't open",
+            detail: "If Quillpoint ever can't open your data, the recovery screen now gathers everything you can restore from — your backups and any data previously set aside — in one place. It only offers copies it can actually open, and your current data is set aside (never deleted) first."),
         WhatsNewItem(
             icon: "arrow.down.doc",
             title: "Restore from a JSON export",

@@ -74,9 +74,11 @@ struct TaskTrackerApp: App {
                 }()
                 RecoveryView(reason: reason,
                              backupManager: backupManager,
+                             quarantined: PersistenceController.quarantinedStores(storeURL: storeURL),
                              onRetry: retryBringUp,
                              onStartFresh: startFresh,
                              onRestore: restoreFromBackup,
+                             onRestoreQuarantined: restoreFromQuarantine,
                              onRestoreJSON: restoreFromJSON)
             }
         }
@@ -182,6 +184,20 @@ struct TaskTrackerApp: App {
             try backupManager.restoreFromFile(backup: backup)
         } catch {
             DiagnosticLog.shared.record("recovery-restore-failed", String(describing: error))
+        }
+        backupManager.refresh()
+        retryBringUp()
+    }
+
+    /// "Restore" a previously set-aside (quarantined) store: swaps it back in as the
+    /// live store (the current store is set aside first, so this too is reversible),
+    /// then re-runs bring-up. This is what makes Start Fresh's "recoverable later"
+    /// promise real — a quarantined store is restorable, not just sitting in a folder.
+    private func restoreFromQuarantine(_ store: PersistenceController.QuarantinedStore) {
+        do {
+            try backupManager.restoreStoreFile(at: store.url)
+        } catch {
+            DiagnosticLog.shared.record("recovery-restore-quarantine-failed", String(describing: error))
         }
         backupManager.refresh()
         retryBringUp()
