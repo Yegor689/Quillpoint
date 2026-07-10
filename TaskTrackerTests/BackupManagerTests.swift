@@ -280,6 +280,47 @@ struct BackupManagerTests {
         #expect(unpinnedCount <= BackupManagerTests.maxAutoBackupsForTest)
     }
 
+    // MARK: - Recovery restore safety
+
+    /// A restore from a BAD source must throw and leave the live store exactly in place.
+    /// Regression for the bug where restoreStoreFile moved the live store aside BEFORE
+    /// the (failing) copy, leaving the app with no store — the caller then opened blank.
+    /// The staged-copy-first ordering means a bad source throws before anything is moved.
+    @Test func restoreFromBadSourceThrowsAndKeepsLiveStore() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+
+        let liveBytesBefore = try Data(contentsOf: f.storeURL)
+        let missingSource = f.dir.appendingPathComponent("does-not-exist.store")
+
+        #expect(throws: (any Error).self) {
+            try f.manager.restoreStoreFile(at: missingSource)
+        }
+
+        // The live store is untouched, and nothing was set aside into Quarantine.
+        #expect(FileManager.default.fileExists(atPath: f.storeURL.path))
+        #expect(try Data(contentsOf: f.storeURL) == liveBytesBefore)
+        let quarantine = f.storeURL.deletingLastPathComponent().appending(component: "Quarantine")
+        #expect(FileManager.default.fileExists(atPath: quarantine.path) == false)
+    }
+
+    /// createBackup returns the backup it just wrote, even when a pinned (older) backup
+    /// sorts ahead of it. Regression for returning `backups.first` (pinned-first sorted).
+    @Test func createBackupReturnsTheNewBackupNotAPinnedOne() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+
+        // Plant and pin an older auto backup so it sorts to the front of `backups`.
+        let pinnedName = plantAuto(f, "2020-01-01 10-00-00")
+        f.manager.refresh()
+        f.manager.setPinned(try #require(f.manager.autoBackups.first { $0.name.contains(pinnedName) }), true)
+
+        let made = try #require(f.manager.createBackup(label: "fresh one"))
+        #expect(made.label == "fresh one")
+        #expect(made.isPinned == false)
+        #expect(made.kind == .manual)
+    }
+
     /// Mirror of BackupManager's private maxAutoBackups for assertions.
     private static let maxAutoBackupsForTest = 10
 

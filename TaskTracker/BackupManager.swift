@@ -229,7 +229,10 @@ final class BackupManager {
         guard Self.sqliteOnlineBackup(from: storeURL, to: dest) else { return nil }
 
         refresh()
-        return backups.first
+        // Return the backup we just wrote — identified by its stem, NOT `backups.first`.
+        // `backups` is sorted pinned-first, so `.first` can be an older pinned backup
+        // rather than this newly-created (never-pinned) one.
+        return backups.first { $0.name == name }
     }
 
     /// Copies a live (possibly open, WAL-mode) SQLite database into `dest` as a
@@ -343,25 +346,33 @@ final class BackupManager {
     }
 
     /// Restores any `.store` file (a backup OR a quarantined store) by REPLACING the
-    /// live store on disk. The current (unreadable) store is moved to Quarantine first,
-    /// never deleted, so this is reversible. After it returns, the caller re-runs
-    /// bring-up, which opens the restored store (migrating forward if older).
+    /// live store on disk. The current store is moved to Quarantine first (never
+    /// deleted), so this is reversible; the caller then re-runs bring-up.
+    ///
+    /// Ordering matters: the source is copied to a temp location BEFORE the live store
+    /// is moved aside, so a copy failure (bad source, disk full, permissions) throws
+    /// while the live store is still in place — never leaving the app with no store.
+    /// Only once the copy has succeeded do we set the current store aside and move the
+    /// staged copy into place.
     func restoreStoreFile(at sourceURL: URL) throws {
         let fm = FileManager.default
 
-        // Set the current store aside (recoverable), clearing the destination so the
-        // copy lands cleanly. Reuses the same Quarantine location as "Start Fresh".
-        PersistenceController.startFresh(storeURL: storeURL)
-
-        // Copy the source into place as the new live store. Sidecars normally don't
-        // exist (the online backup writes a single self-contained file), but copy any
-        // that do so the restored store is consistent.
-        try fm.copyItem(at: sourceURL, to: storeURL)
+        // Stage the source into a temp file first — this is the step that can fail.
+        let staged = fm.temporaryDirectory.appending(component: "restore-\(UUID().uuidString).store")
+        defer { for e in ["", "-wal", "-shm"] { try? fm.removeItem(at: URL(fileURLWithPath: staged.path + e)) } }
+        try fm.copyItem(at: sourceURL, to: staged)
         for ext in ["wal", "shm"] {
             let side = sourceURL.appendingPathExtension(ext)
-            if fm.fileExists(atPath: side.path) {
-                try? fm.copyItem(at: side, to: storeURL.appendingPathExtension(ext))
-            }
+            if fm.fileExists(atPath: side.path) { try? fm.copyItem(at: side, to: staged.appendingPathExtension(ext)) }
+        }
+
+        // Copy succeeded — now it's safe to set the current store aside and swap in the
+        // staged copy. Reuses the same Quarantine location as "Start Fresh".
+        PersistenceController.startFresh(storeURL: storeURL)
+        try fm.moveItem(at: staged, to: storeURL)
+        for ext in ["wal", "shm"] {
+            let side = staged.appendingPathExtension(ext)
+            if fm.fileExists(atPath: side.path) { try? fm.moveItem(at: side, to: storeURL.appendingPathExtension(ext)) }
         }
     }
 

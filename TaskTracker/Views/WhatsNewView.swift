@@ -39,9 +39,13 @@ enum WhatsNew {
     /// Highlights for the current release. Re-author this list each version.
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
+            icon: "checkmark.shield",
+            title: "Safer recovery",
+            detail: "Restoring from the recovery screen is now fail-safe: if a restore can't complete, your current data is never moved or emptied, and you're told what happened — the app can no longer come up blank after a failed restore."),
+        WhatsNewItem(
             icon: "clock.arrow.circlepath",
             title: "Restore your data when it won't open",
-            detail: "If Quillpoint ever can't open your data, the recovery screen now gathers everything you can restore from — your backups and any data previously set aside — in one place. It only offers copies it can actually open, and your current data is set aside (never deleted) first."),
+            detail: "If Quillpoint ever can't open your data, the recovery screen gathers everything you can restore from — your backups and any data previously set aside — in one place. It only offers copies it can actually open, and your current data is set aside (never deleted) first."),
         WhatsNewItem(
             icon: "arrow.down.doc",
             title: "Restore from a JSON export",

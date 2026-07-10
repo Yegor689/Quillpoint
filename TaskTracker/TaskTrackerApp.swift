@@ -180,13 +180,7 @@ struct TaskTrackerApp: App {
     /// chosen backup on disk (the current store is set aside in Quarantine, not deleted),
     /// then re-runs bring-up so the restored store opens (migrating forward if older).
     private func restoreFromBackup(_ backup: Backup) {
-        do {
-            try backupManager.restoreFromFile(backup: backup)
-        } catch {
-            DiagnosticLog.shared.record("recovery-restore-failed", String(describing: error))
-        }
-        backupManager.refresh()
-        retryBringUp()
+        restoreThen(source: "backup") { try backupManager.restoreFromFile(backup: backup) }
     }
 
     /// "Restore" a previously set-aside (quarantined) store: swaps it back in as the
@@ -194,13 +188,35 @@ struct TaskTrackerApp: App {
     /// then re-runs bring-up. This is what makes Start Fresh's "recoverable later"
     /// promise real — a quarantined store is restorable, not just sitting in a folder.
     private func restoreFromQuarantine(_ store: PersistenceController.QuarantinedStore) {
+        restoreThen(source: "quarantine") { try backupManager.restoreStoreFile(at: store.url) }
+    }
+
+    /// Runs a store-replacing restore and re-attempts bring-up ONLY if it succeeded.
+    /// `restoreStoreFile` moves the current store aside (Quarantine) before copying the
+    /// chosen source into place, so if the copy throws the live store is already gone —
+    /// calling `retryBringUp` unconditionally would then open a blank store and silently
+    /// strand the user (the exact failure the recovery flow exists to prevent). On
+    /// failure we surface an alert and stay on the recovery screen; the moved store is
+    /// recoverable from Quarantine.
+    private func restoreThen(source: String, _ restore: () throws -> Void) {
         do {
-            try backupManager.restoreStoreFile(at: store.url)
+            try restore()
         } catch {
-            DiagnosticLog.shared.record("recovery-restore-quarantine-failed", String(describing: error))
+            DiagnosticLog.shared.record("recovery-restore-\(source)-failed", String(describing: error))
+            showRestoreError(error)
+            return
         }
         backupManager.refresh()
         retryBringUp()
+    }
+
+    /// Warns the user that a recovery-screen restore failed, without blanking the app.
+    private func showRestoreError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn’t restore that data"
+        alert.informativeText = "Restoring failed and your data wasn’t changed. If your previous data was set aside, it’s still in the Quarantine folder. Try another backup, a set-aside copy, or a JSON export.\n\n\(error.localizedDescription)"
+        alert.runModal()
     }
 
     /// "Restore from JSON" (recovery screen): rebuilds the store from a JSON export.
