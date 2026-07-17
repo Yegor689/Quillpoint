@@ -93,14 +93,23 @@ struct RecoveryView: View {
             }
             .frame(maxWidth: 440)
 
-            // Primary actions. For a regression the store already opened, so instead of
-            // "Try Again" the emphasis is Restore Data (recover the newer data) with a
-            // Continue Anyway escape; for a hard failure it's Try Again + Restore Data.
+            // Primary actions, tuned to what actually helps in each case:
+            //  • Regression — the store already opened; emphasize Restore Data (recover the
+            //    newer data) with a Continue Anyway escape.
+            //  • Downgrade — Try Again can't help (this same older build will re-fail on a
+            //    genuinely newer store); the real fix is "update Quillpoint" (in the body).
+            //    Offer Restore Data (an older backup this build CAN read) as the emphasis,
+            //    no Try Again to avoid sending the user in a loop.
+            //  • Hard failure — Try Again first (fixes a transient error or works after
+            //    installing a fixed build), then Restore Data.
             HStack(spacing: 12) {
                 if isRegression, let onContinueAnyway {
                     Button("Restore Data…") { showRestore = true }
                         .keyboardShortcut(.defaultAction)
                     Button("Continue Anyway", action: onContinueAnyway)
+                } else if isDowngrade {
+                    Button("Restore Data…") { showRestore = true }
+                        .keyboardShortcut(.defaultAction)
                 } else {
                     Button("Try Again", action: onRetry)
                         .keyboardShortcut(.defaultAction)
@@ -108,12 +117,15 @@ struct RecoveryView: View {
                 }
             }
 
-            // Secondary, de-emphasized actions. Start Fresh is hidden for a regression:
-            // the store isn't broken, so setting it aside would needlessly quarantine the
-            // user's (possibly only) data — Restore or Continue Anyway are the right moves.
+            // Secondary, de-emphasized actions. Start Fresh is hidden whenever the store
+            // is actually intact and openable — a regression (opened but looks stale) and
+            // a downgrade (opened fine by a newer build; this older one just can't read it).
+            // In both cases setting the data aside would needlessly quarantine the user's
+            // (possibly only) good data; the body copy for downgrade even says "Don't Start
+            // Fresh." Only a hard open FAILURE offers it.
             HStack(spacing: 16) {
                 Button("Export Diagnostics…", action: exportDiagnostics)
-                if !isRegression {
+                if !isRegression && !isDowngrade {
                     Button("Start Fresh…", role: .destructive) { confirmStartFresh = true }
                         .foregroundStyle(.secondary)
                 }
@@ -319,4 +331,52 @@ private struct RestoreDataPicker: View {
             }
         }
     }
+}
+
+// MARK: - Previews
+//
+// Renders every recovery variant with a throwaway, EMPTY backup store (a temp dir), so
+// the canvas never reads or touches the live store/backups. This exercises the real view
+// branching (icon, title, body copy, which buttons appear) that unit tests can't reach.
+// The action closures are no-ops — the previews verify appearance, not the restore flow.
+
+private func previewBackupManager() -> BackupManager {
+    let tmp = FileManager.default.temporaryDirectory
+        .appending(component: "RecoveryPreview-\(UUID().uuidString)", directoryHint: .isDirectory)
+    return BackupManager(
+        storeURL: tmp.appending(component: "TaskTracker.store"),
+        backupDir: tmp.appending(component: "Backups", directoryHint: .isDirectory),
+        defaults: UserDefaults(suiteName: "recovery-preview-\(UUID().uuidString)")!)
+}
+
+#Preview("Regression (stale store)") {
+    RecoveryView(
+        reason: PersistenceController.regressionReasonPrefix
+            + " The data Quillpoint opened looks older than your last session.",
+        backupManager: previewBackupManager(),
+        quarantined: [],
+        onRetry: {}, onStartFresh: {},
+        onRestore: { _ in }, onRestoreQuarantined: { _ in }, onRestoreJSON: {},
+        onContinueAnyway: {})   // non-nil ⇒ Restore Data + Continue Anyway, no Start Fresh
+}
+
+#Preview("Hard open failure") {
+    RecoveryView(
+        reason: "The store could not be opened: SQLite error 11 (database disk image is malformed).",
+        backupManager: previewBackupManager(),
+        quarantined: [],
+        onRetry: {}, onStartFresh: {},
+        onRestore: { _ in }, onRestoreQuarantined: { _ in }, onRestoreJSON: {},
+        onContinueAnyway: nil)   // nil ⇒ Try Again + Restore Data + Start Fresh
+}
+
+#Preview("Downgrade (newer store)") {
+    RecoveryView(
+        reason: PersistenceController.downgradeReasonPrefix
+            + " The data is version 99.0.0, but this build only understands up to 2.0.0.",
+        backupManager: previewBackupManager(),
+        quarantined: [],
+        onRetry: {}, onStartFresh: {},
+        onRestore: { _ in }, onRestoreQuarantined: { _ in }, onRestoreJSON: {},
+        onContinueAnyway: nil)
 }
