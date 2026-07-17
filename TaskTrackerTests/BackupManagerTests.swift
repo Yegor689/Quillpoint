@@ -3,6 +3,19 @@ import Foundation
 import SwiftData
 @testable import Quillpoint
 
+/// A small deterministic RNG so fuzz failures reproduce exactly (SplitMix64).
+struct SeededRNG: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+}
+
 /// Black-box tests for BackupManager. They exercise only the public API
 /// (createBackup / restore / backups), run against an isolated temporary store
 /// and backup directory (never production data or preferences), and focus on
@@ -158,6 +171,74 @@ struct BackupManagerTests {
         #expect(personal.tasks.filter { $0.parent == nil }.count == 2)
         let clean = try #require(try f.tasks().first { $0.plainTitle == "Clean flat" })
         #expect(Set(clean.subtasks.map(\.plainTitle)) == ["Vacuum", "Dishes"])
+    }
+
+    /// FUZZ: many randomized datasets, each round-tripped backup→restore, asserting EXACT
+    /// per-field equality. This is the guard against silent `cloneScalars` field drops —
+    /// if a Task field stops being copied on restore, some random dataset will differ and
+    /// this fails. Deterministic (seeded) so a failure is reproducible.
+    @Test func fuzzRoundTripPreservesEveryField() throws {
+        var rng = SeededRNG(seed: 0xC0FFEE)
+        for iteration in 0..<40 {
+            let f = try Fixture(); defer { f.cleanup() }
+            try seedRandom(f, rng: &rng)
+            let before = try taskFields(f)
+
+            let backup = try #require(f.manager.createBackup(label: "fuzz\(iteration)"))
+
+            // Mutate arbitrarily so restore has real work to undo.
+            for t in try f.tasks() where Bool.random(using: &rng) {
+                t.setDone(Bool.random(using: &rng))
+                t.priority = Int.random(in: 0...2, using: &rng)
+                t.sortIndex = Int.random(in: 0...99, using: &rng)
+            }
+            if let victim = try f.tasks().first(where: { $0.parent == nil }) {
+                f.context.delete(victim)
+            }
+            try f.save()
+
+            try f.manager.restore(backup: backup)
+
+            #expect(try taskFields(f) == before, "field drift on fuzz iteration \(iteration)")
+        }
+    }
+
+    /// Seeds a random but valid dataset: 1–3 projects, each with 0–6 root tasks, each
+    /// root with 0–3 subtasks; randomized titles/descriptions (incl. non-ASCII), done
+    /// state, priority, sortIndex, completedAt, reminderDate.
+    private func seedRandom(_ f: Fixture, rng: inout SeededRNG) throws {
+        let ctx = f.context
+        let projectCount = Int.random(in: 1...3, using: &rng)
+        for p in 0..<projectCount {
+            let project = Project(title: "Proj \(p) \(randomText(&rng))", desc: randomText(&rng))
+            ctx.insert(project)
+            let rootCount = Int.random(in: 0...6, using: &rng)
+            for r in 0..<rootCount {
+                let root = makeRandomTask(&rng, "r\(p).\(r)", project: project, parent: nil)
+                ctx.insert(root); project.tasks.append(root)
+                for s in 0..<Int.random(in: 0...3, using: &rng) {
+                    let sub = makeRandomTask(&rng, "s\(p).\(r).\(s)", project: project, parent: root)
+                    ctx.insert(sub); root.subtasks.append(sub)
+                }
+            }
+        }
+        try f.save()
+    }
+
+    private func makeRandomTask(_ rng: inout SeededRNG, _ tag: String, project: Project, parent: Task?) -> Task {
+        let t = Task(plainTitle: "\(tag) \(randomText(&rng))", plainDesc: randomText(&rng),
+                     priority: Int.random(in: 0...2, using: &rng), project: project, parent: parent)
+        t.sortIndex = Int.random(in: 0...99, using: &rng)
+        if Bool.random(using: &rng) { t.setDone(true) }
+        if Bool.random(using: &rng) {
+            t.reminderDate = Date(timeIntervalSinceReferenceDate: Double(Int.random(in: 0...800_000_000, using: &rng)))
+        }
+        return t
+    }
+
+    private func randomText(_ rng: inout SeededRNG) -> String {
+        let words = ["alpha", "β-test", "café", "日本語", "quick", "brown", "🦊", "task", "note"]
+        return (0..<Int.random(in: 1...4, using: &rng)).map { _ in words.randomElement(using: &rng)! }.joined(separator: " ")
     }
 
     // MARK: - Backup management
@@ -321,6 +402,71 @@ struct BackupManagerTests {
         #expect(made.kind == .manual)
     }
 
+    // MARK: - Content-aware auto-backup
+
+    /// An auto-backup is NOT taken when the store's content is unchanged since the last
+    /// one — the fix for a frozen store filling the window with identical snapshots. Uses
+    /// an OLD-dated planted backup so the interval guard is satisfied and the CONTENT
+    /// check is what decides.
+    @Test func autoBackupSkipsWhenContentUnchanged() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f); try f.save()
+
+        // Make a REAL auto-backup of current content (consistent online-backup snapshot),
+        // then back-date its filename so the interval has "elapsed" — leaving CONTENT as
+        // the only thing that decides whether the next run backs up.
+        try makeOldAutoBackupOfCurrentContent(f, dated: "2020-01-01 10-00-00")
+        let before = f.manager.autoBackups.count
+
+        f.manager.autoBackupIntervalHours = 1
+        f.manager.startAutoBackup() // interval elapsed, but content identical → must skip
+        #expect(f.manager.autoBackups.count == before, "unchanged content must not create a new auto-backup")
+    }
+
+    /// A real change DOES produce a new auto-backup (the skip only applies to no-ops).
+    @Test func autoBackupTakenWhenContentChanged() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f); try f.save()
+
+        try makeOldAutoBackupOfCurrentContent(f, dated: "2020-01-01 10-00-00")
+        let before = f.manager.autoBackups.count
+
+        // Change the store so the live fingerprint differs from the planted backup.
+        let p = try #require(try f.projects().first)
+        let t = Task(plainTitle: "brand new", project: p); f.context.insert(t); p.tasks.append(t)
+        try f.save()
+
+        f.manager.autoBackupIntervalHours = 1
+        f.manager.startAutoBackup() // content changed → must back up
+        #expect(f.manager.autoBackups.count == before + 1, "changed content must create a new auto-backup")
+    }
+
+    /// Pruning removes content-DUPLICATE auto-backups, keeping distinct states — so a
+    /// frozen store's identical snapshots can't evict genuinely different older backups.
+    @Test func pruneDropsContentDuplicates() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f); try f.save()
+
+        // Plant 6 IDENTICAL-content auto backups (plantAuto copies the same live store).
+        for day in 1...6 { plantAuto(f, String(format: "2026-02-%02d 10-00-00", day)) }
+        f.manager.refresh()
+        #expect(f.manager.autoBackups.count == 6)
+
+        // Trigger a prune. All 6 share one fingerprint, so dedup should collapse them to
+        // the single newest distinct state (plus whatever the trigger itself creates).
+        f.manager.autoBackupIntervalHours = 1
+        f.manager.startAutoBackup()
+
+        // Group survivors by fingerprint; no fingerprint should have more than one.
+        let survivors = f.manager.autoBackups.filter { !$0.isPinned }
+        let byFingerprint = Dictionary(grouping: survivors) { b in
+            b.fingerprint.map { "\($0.taskCount):\($0.latestActivity)" } ?? UUID().uuidString
+        }
+        for (_, group) in byFingerprint {
+            #expect(group.count == 1, "content duplicates were not pruned")
+        }
+    }
+
     /// Mirror of BackupManager's private maxAutoBackups for assertions.
     private static let maxAutoBackupsForTest = 10
 
@@ -333,5 +479,16 @@ struct BackupManagerTests {
         let dest = f.backupDir.appendingPathComponent("auto-\(timestamp).store")
         try? FileManager.default.copyItem(at: src, to: dest)
         return timestamp
+    }
+
+    /// Makes a REAL auto-backup of the current live content via the manager (consistent
+    /// online-backup snapshot, so its fingerprint matches the live context deterministically
+    /// regardless of WAL checkpoint state), then renames it to an old-dated auto filename
+    /// so the interval guard is satisfied and the content check is what's under test.
+    private func makeOldAutoBackupOfCurrentContent(_ f: Fixture, dated timestamp: String) throws {
+        let made = try #require(f.manager.createBackup(kind: .auto))
+        let dest = f.backupDir.appendingPathComponent("auto-\(timestamp).store")
+        try FileManager.default.moveItem(at: made.url, to: dest)
+        f.manager.refresh()
     }
 }

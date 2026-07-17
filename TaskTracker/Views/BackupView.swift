@@ -222,6 +222,18 @@ private struct BackupRow: View {
                 Text(formatter.string(from: backup.date))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // Real content age. Shown when the data inside is meaningfully older than
+                // the backup's write date — the signal that a backup is stale (captured
+                // from a frozen store), which the write date alone would hide.
+                if let fp = backup.fingerprint, let contentDate = fp.latestActivityDate,
+                   backup.date.timeIntervalSince(contentDate) > 86_400 {
+                    Label("Newest content: \(formatter.string(from: contentDate))",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .help("The data in this backup is older than when the backup was made — it may have been captured from a store that stopped updating.")
+                }
             }
 
             Spacer()
