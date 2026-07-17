@@ -101,12 +101,23 @@ struct RichTitleField: NSViewRepresentable {
             tv.setCompletedAppearance(false)
         }
 
+        // Caret-to-end must happen ONLY on the false→true transition of isFocused (a
+        // newly created or navigated-to row taking focus programmatically). While a row
+        // stays focused, unrelated re-renders — e.g. hover revealing the row's action
+        // buttons, which relayouts the field and can bounce first responder — must NOT
+        // touch the caret, or it jumps to the end of the title away from where the user
+        // clicked (issue #37).
+        let focusJustGained = isFocused && !context.coordinator.wasFocused
+        context.coordinator.wasFocused = isFocused
+
         if isFocused {
             DispatchQueue.main.async {
                 guard let window = tv.window, window.firstResponder !== tv else { return }
                 if let cur = window.firstResponder, !(cur is RichInlineTextView), cur is NSText { return }
                 window.makeFirstResponder(tv)
-                tv.setSelectedRange(NSRange(location: tv.string.utf16.count, length: 0))
+                if focusJustGained {
+                    tv.setSelectedRange(NSRange(location: tv.string.utf16.count, length: 0))
+                }
             }
         }
     }
@@ -118,6 +129,9 @@ struct RichTitleField: NSViewRepresentable {
         let actions: ActionBox
         weak var textView: NSTextView?
         var isUpdating = false
+        // Tracks the previous isFocused so caret-to-end fires only on the false→true
+        // transition, not on re-renders while the row stays focused (issue #37).
+        var wasFocused = false
 
         init(_ parent: RichTitleField) {
             self.parent = parent
