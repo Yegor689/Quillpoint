@@ -28,6 +28,9 @@ struct RecoveryView: View {
     let onRestoreQuarantined: (PersistenceController.QuarantinedStore) -> Void
     /// Rebuilds the store from a JSON export (schema-independent recovery path).
     let onRestoreJSON: () -> Void
+    /// Non-nil ONLY for the regression case (store opened but looks stale): lets the user
+    /// override a false positive and use the data as-is. nil for hard open failures.
+    var onContinueAnyway: (() -> Void)? = nil
 
     @State private var showDetails = false
     @State private var confirmStartFresh = false
@@ -40,42 +43,80 @@ struct RecoveryView: View {
         reason.hasPrefix(PersistenceController.downgradeReasonPrefix)
     }
 
+    /// True when the store OPENED but its content looks older than last session. The
+    /// store is fine to use if the user wants; the screen nudges toward restoring first.
+    private var isRegression: Bool {
+        reason.hasPrefix(PersistenceController.regressionReasonPrefix)
+    }
+
+    private var headerIcon: String {
+        if isDowngrade { return "arrow.up.circle" }
+        if isRegression { return "clock.badge.exclamationmark" }
+        return "exclamationmark.shield"
+    }
+    private var headerColor: Color {
+        if isDowngrade { return .blue }
+        if isRegression { return .orange }
+        return .orange
+    }
+    private var headerTitle: String {
+        if isDowngrade { return "This data was made by a newer Quillpoint" }
+        if isRegression { return "Your data may be out of date" }
+        return "Quillpoint couldn't open your data"
+    }
+    private var bodyText: String {
+        if isDowngrade {
+            return "This copy of your data was created by a newer version of Quillpoint, and this older version can't open it safely. Update Quillpoint to the latest version, then reopen — your data is untouched. Don't Start Fresh; that would set this data aside."
+        }
+        if isRegression {
+            return "The data Quillpoint just opened looks older than what you had last session — recent tasks may be missing. This can happen if an older version was run or after a restore. Restore your latest data from a backup below. If this is expected (for example, you deleted a lot), choose Continue Anyway."
+        }
+        return "It's still on your Mac, untouched. Try Again first — installing the latest version and retrying usually fixes it. If you're stuck, restore from a backup, a previously set-aside copy, or a JSON export."
+    }
+
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: isDowngrade ? "arrow.up.circle" : "exclamationmark.shield")
+            Image(systemName: headerIcon)
                 .font(.system(size: 44))
-                .foregroundStyle(isDowngrade ? .blue : .orange)
+                .foregroundStyle(headerColor)
 
-            Text(isDowngrade
-                 ? "This data was made by a newer Quillpoint"
-                 : "Quillpoint couldn't open your data")
+            Text(headerTitle)
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 6) {
                 Text("Your data has not been lost.")
                     .fontWeight(.medium)
-                Text(isDowngrade
-                     ? "This copy of your data was created by a newer version of Quillpoint, and this older version can't open it safely. Update Quillpoint to the latest version, then reopen — your data is untouched. Don't Start Fresh; that would set this data aside."
-                     : "It's still on your Mac, untouched. Try Again first — installing the latest version and retrying usually fixes it. If you're stuck, restore from a backup, a previously set-aside copy, or a JSON export.")
+                Text(bodyText)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: 440)
 
-            // Primary actions: retry, then a single "Restore Data" entry point that
-            // gathers every recoverable source in one place.
+            // Primary actions. For a regression the store already opened, so instead of
+            // "Try Again" the emphasis is Restore Data (recover the newer data) with a
+            // Continue Anyway escape; for a hard failure it's Try Again + Restore Data.
             HStack(spacing: 12) {
-                Button("Try Again", action: onRetry)
-                    .keyboardShortcut(.defaultAction)
-                Button("Restore Data…") { showRestore = true }
+                if isRegression, let onContinueAnyway {
+                    Button("Restore Data…") { showRestore = true }
+                        .keyboardShortcut(.defaultAction)
+                    Button("Continue Anyway", action: onContinueAnyway)
+                } else {
+                    Button("Try Again", action: onRetry)
+                        .keyboardShortcut(.defaultAction)
+                    Button("Restore Data…") { showRestore = true }
+                }
             }
 
-            // Secondary, de-emphasized actions.
+            // Secondary, de-emphasized actions. Start Fresh is hidden for a regression:
+            // the store isn't broken, so setting it aside would needlessly quarantine the
+            // user's (possibly only) data — Restore or Continue Anyway are the right moves.
             HStack(spacing: 16) {
                 Button("Export Diagnostics…", action: exportDiagnostics)
-                Button("Start Fresh…", role: .destructive) { confirmStartFresh = true }
-                    .foregroundStyle(.secondary)
+                if !isRegression {
+                    Button("Start Fresh…", role: .destructive) { confirmStartFresh = true }
+                        .foregroundStyle(.secondary)
+                }
             }
             .buttonStyle(.borderless)
             .controlSize(.small)

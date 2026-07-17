@@ -9,6 +9,10 @@ private struct AppServices {
     let projectStore: ProjectStore
     let taskStore: TaskStore
     let reminderManager: ReminderManager
+    /// True when the opened store looks meaningfully older than the data the app last
+    /// saw — a sign another build or a restore silently swapped in a stale store. The
+    /// UI warns the user (recommend checking Backups) while divergence may be recoverable.
+    let dataRegressed: Bool
 }
 
 @main
@@ -29,6 +33,10 @@ struct TaskTrackerApp: App {
     @State private var services: AppServices?
     /// Presents the What's New screen (auto once per new version, or via the menu).
     @State private var showWhatsNew = false
+    /// Set when the user explicitly chooses to continue past a suspected data regression
+    /// (a false positive — e.g. they really did delete a lot). Lets the normal UI show
+    /// for the rest of the session instead of holding them on the recovery screen.
+    @State private var continuedPastRegression = false
 
     init() {
         let backupManager = BackupManager(storeURL: storeURL)
@@ -50,23 +58,45 @@ struct TaskTrackerApp: App {
         let taskStore = TaskStore(context: container.mainContext)
         backupManager.liveContainer = container
         taskStore.backfillSortIndicesIfNeeded()
+        // Compare the opened store to the last-seen high-water mark BEFORE auto-backup
+        // runs, so a regression is caught against the mark from the previous session
+        // (and before a stale snapshot is taken). Records the newest mark either way.
+        let regressed = DataHeartbeat.checkAtLaunch(context: container.mainContext)
         backupManager.startAutoBackup()
         return AppServices(
             container: container,
             projectStore: ProjectStore(context: container.mainContext),
             taskStore: taskStore,
-            reminderManager: ReminderManager())
+            reminderManager: ReminderManager(),
+            dataRegressed: regressed)
     }
 
     var body: some Scene {
         WindowGroup {
-            // Show the normal UI only when services were built. Otherwise recovery —
-            // never force-unwrap into a crash.
-            if let services {
+            // The store opened AND its content isn't a suspected regression → normal UI.
+            // A regression (store looks meaningfully older than last session) routes to
+            // recovery even though the store opened, so the user restores a good backup
+            // BEFORE piling new work onto a possibly-stale store — the protective half of
+            // the heartbeat. `continuedPastRegression` is the user's explicit override for
+            // a false positive (e.g. they really did delete a lot).
+            if let services, !(services.dataRegressed && !continuedPastRegression) {
                 readyView(container: services.container,
                           projectStore: services.projectStore,
                           taskStore: services.taskStore,
                           reminderManager: services.reminderManager)
+            } else if let services, services.dataRegressed {
+                RecoveryView(reason: PersistenceController.regressionReasonPrefix
+                             + " The data Quillpoint opened looks older than your last session. "
+                             + "This can happen if an older version of Quillpoint was run, or after a restore. "
+                             + "Restore a backup below to recover your latest data — or continue if this is expected.",
+                             backupManager: backupManager,
+                             quarantined: PersistenceController.quarantinedStores(storeURL: storeURL),
+                             onRetry: retryBringUp,
+                             onStartFresh: startFresh,
+                             onRestore: restoreFromBackup,
+                             onRestoreQuarantined: restoreFromQuarantine,
+                             onRestoreJSON: restoreFromJSON,
+                             onContinueAnyway: { continuedPastRegression = true })
             } else {
                 let reason: String = {
                     if case .failed(let r, _) = bringUp { return r }
@@ -79,7 +109,8 @@ struct TaskTrackerApp: App {
                              onStartFresh: startFresh,
                              onRestore: restoreFromBackup,
                              onRestoreQuarantined: restoreFromQuarantine,
-                             onRestoreJSON: restoreFromJSON)
+                             onRestoreJSON: restoreFromJSON,
+                             onContinueAnyway: nil)
             }
         }
         .defaultSize(width: 960, height: 620)
