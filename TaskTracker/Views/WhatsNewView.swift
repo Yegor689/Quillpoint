@@ -39,21 +39,21 @@ enum WhatsNew {
     /// Highlights for the current release. Re-author this list each version.
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
-            icon: "checkmark.shield",
-            title: "Safer recovery",
-            detail: "Restoring from the recovery screen is now fail-safe: if a restore can't complete, your current data is never moved or emptied, and you're told what happened — the app can no longer come up blank after a failed restore."),
+            icon: "square.and.pencil",
+            title: "Your edits save right away",
+            detail: "New tasks and subtasks — and any title or note you type — are now saved the moment you make them. They'll be there when you reopen Quillpoint, even if you don't switch away first."),
+        WhatsNewItem(
+            icon: "list.bullet.indent",
+            title: "Subtasks stay put",
+            detail: "Indenting a task into a subtask (and moving one back out) now sticks. Your nesting is exactly as you left it after you quit and reopen."),
         WhatsNewItem(
             icon: "clock.arrow.circlepath",
-            title: "Restore your data when it won't open",
-            detail: "If Quillpoint ever can't open your data, the recovery screen gathers everything you can restore from — your backups and any data previously set aside — in one place. It only offers copies it can actually open, and your current data is set aside (never deleted) first."),
+            title: "Stronger, safer backups",
+            detail: "Backups are captured more reliably, and restoring is fail-safe — if a restore can't complete, your current data is never moved or emptied, and Quillpoint tells you what happened instead of coming up blank."),
         WhatsNewItem(
-            icon: "arrow.down.doc",
-            title: "Restore from a JSON export",
-            detail: "The recovery screen can also rebuild your data from a JSON export you've saved. Because a JSON file doesn't depend on the app's internal format, it's a dependable fallback even when a data file can't be read."),
-        WhatsNewItem(
-            icon: "arrow.up.circle",
-            title: "Protects against older versions",
-            detail: "If you open data that was created by a newer version of Quillpoint, this version now leaves it safely untouched and asks you to update — instead of risking your data by writing to it in an older format."),
+            icon: "checkmark.shield",
+            title: "A heads-up if something looks off",
+            detail: "If the data Quillpoint opens looks older than what you had last time, it now warns you and helps you restore a backup — so you can recover before piling new work onto the wrong copy."),
     ]
 }
 
