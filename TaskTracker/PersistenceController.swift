@@ -25,6 +25,12 @@ enum PersistenceController {
     /// recovery UI could branch on this later; for now it just makes the log clear.
     static let downgradeReasonPrefix = "This data was created by a newer version of Quillpoint."
 
+    /// Prefix on the recovery `reason` when the store opened fine but its content looks
+    /// meaningfully OLDER than last session (a suspected regression from a stale-store
+    /// swap). RecoveryView branches on this to show the protective "restore or continue"
+    /// variant rather than a hard open-failure.
+    static let regressionReasonPrefix = "Your data may be out of date."
+
     /// Attempts to open the store, taking a pre-migration backup when needed. On
     /// failure the store is left untouched and `.failed` is returned — nothing is
     /// moved or deleted, so a retry (or a later fixed build) can still read it.
@@ -47,10 +53,16 @@ enum PersistenceController {
             return .failed(reason: reason, storeURL: storeURL)
         }
 
-        // Safety backup before a migration mutates the store.
+        // Safety backup ONLY when a migration will actually run — i.e. the store on disk
+        // is at an OLDER schema version than this build. Without this version check the
+        // backup fired on EVERY launch (migrationPlan is always non-nil and the store
+        // always exists), piling up unbounded "before migration" backups. A migration
+        // runs only when the recorded version is strictly older than the newest known.
         if let backupManager,
            migrationPlan != nil,
-           FileManager.default.fileExists(atPath: storeURL.path) {
+           FileManager.default.fileExists(atPath: storeURL.path),
+           let onDisk = onDiskVersion(storeURL: storeURL),
+           onDisk < QuillpointSchema.newestKnownVersion {
             backupManager.createBackup(label: "before migration", kind: .preRestore)
         }
 

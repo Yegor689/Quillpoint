@@ -31,7 +31,17 @@ struct ContentView: View {
             case .all:
                 AllTasksView(selection: $selection)
             case .project(let project):
-                TaskListView(project: project, selection: $selection)
+                // Resolve the selection against the LIVE query results by id. A restore
+                // deletes and recreates every project, so `project` here can be a deleted
+                // instance (same id, new object) — rendering it shows an empty list until
+                // the user reselects. Re-resolve to the current instance, or fall back if
+                // it's genuinely gone, so the view recovers immediately after a restore.
+                if let live = projects.first(where: { $0.id == project.id }) {
+                    TaskListView(project: live, selection: $selection)
+                } else {
+                    ContentUnavailableView("Select a Project", systemImage: "folder")
+                        .task { selection = projects.first.map { .project($0) } ?? .all }
+                }
             case nil:
                 ContentUnavailableView("Select a Project", systemImage: "folder")
             }

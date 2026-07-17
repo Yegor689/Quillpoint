@@ -36,6 +36,31 @@ struct PersistenceControllerTests {
         }
     }
 
+    /// Opening a store that is ALREADY at the current version must NOT take a
+    /// "before migration" backup — no migration will run. Regression for the bug where
+    /// the pre-migration backup fired on every launch (migrationPlan always non-nil),
+    /// piling up unbounded "before migration" backups.
+    @Test func noPreMigrationBackupWhenStoreIsCurrent() throws {
+        let tmp = TempDir()
+        let storeURL = tmp.store()
+        let backupDir = tmp.url.appending(component: "Backups", directoryHint: .isDirectory)
+        let defaults = UserDefaults(suiteName: "pc-\(UUID().uuidString)")!
+        let mgr = BackupManager(storeURL: storeURL, backupDir: backupDir, defaults: defaults)
+
+        // First open creates the store at the CURRENT version.
+        _ = PersistenceController.bringUp(storeURL: storeURL, schema: QuillpointSchema.current,
+                                          migrationPlan: QuillpointMigrationPlan.self, backupManager: mgr)
+        mgr.refresh()
+        let afterFirst = mgr.preRestoreBackups.count
+
+        // Second open of the now-current store must NOT add a "before migration" backup.
+        _ = PersistenceController.bringUp(storeURL: storeURL, schema: QuillpointSchema.current,
+                                          migrationPlan: QuillpointMigrationPlan.self, backupManager: mgr)
+        mgr.refresh()
+        #expect(mgr.preRestoreBackups.count == afterFirst,
+                "a current-version store must not trigger a pre-migration backup")
+    }
+
     @Test func failedOpenLeavesStoreInPlace() throws {
         let tmp = TempDir()
         let storeURL = tmp.store()
