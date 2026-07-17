@@ -38,6 +38,13 @@ struct TaskTrackerApp: App {
     /// for the rest of the session instead of holding them on the recovery screen.
     @State private var continuedPastRegression = false
 
+    /// Drives a persist-on-leave-active save. SwiftData's autosave is deferred, so text
+    /// edits that flow straight into `@Bindable` model properties (task titles, notes) —
+    /// which never pass through TaskStore.save() — can be lost if the process is killed
+    /// before an autosave tick (Xcode rebuild / a freeze). Flushing whenever the scene
+    /// stops being active closes that window for those binding-driven edits.
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
         let backupManager = BackupManager(storeURL: storeURL)
         self.backupManager = backupManager
@@ -114,6 +121,13 @@ struct TaskTrackerApp: App {
             }
         }
         .defaultSize(width: 960, height: 620)
+        .onChange(of: scenePhase) { _, phase in
+            // Leaving .active (backgrounded, hidden, about to terminate) is the last
+            // reliable moment to flush binding-driven edits that never went through
+            // TaskStore.save(). A clean quit flushes anyway; this also covers the app
+            // being backgrounded before a crash/freeze reaches termination.
+            if phase != .active { services?.taskStore.save() }
+        }
         .commands {
             // App (Quillpoint) menu: backups, data export/import, and diagnostics.
             CommandGroup(after: .appSettings) {

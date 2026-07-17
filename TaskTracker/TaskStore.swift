@@ -38,6 +38,21 @@ final class TaskStore {
     /// First 8 chars of a UUID — compact, correlatable id for the diagnostic log.
     fileprivate static func short(_ id: UUID) -> String { String(id.uuidString.prefix(8)) }
 
+    /// Flushes pending changes to disk NOW. SwiftData's autosave is deferred (it fires
+    /// on run-loop ticks and on graceful termination), so a new task/subtask can be lost
+    /// if the process dies before a tick — an Xcode rebuild (SIGKILL) or a freeze that
+    /// never reaches a clean quit. Every public mutation calls this so an edit is durable
+    /// the instant it happens. Failures are logged, not thrown: a mutation must never
+    /// crash the UI, and the pending change stays in the context for the next save/quit.
+    func save() {
+        guard context.hasChanges else { return }
+        do {
+            try context.save()
+        } catch {
+            diagnostics.record("save-failed", "\(error)")
+        }
+    }
+
     /// One-time backfill: existing data has all sortIndex == 0. If a project's
     /// root tasks (or any task's subtasks) all share index 0, assign sequential
     /// indices from their legacy createdAt order so manual ordering has a basis.
@@ -103,6 +118,7 @@ final class TaskStore {
             store.deleteTask(task, in: project)
         }
         undoManager?.setActionName("Add Task")
+        save()
         return task
     }
 
@@ -112,12 +128,16 @@ final class TaskStore {
         // Re-render the title at the subtask (body) font size so it doesn't stay
         // at the larger top-level (title3) size it was created with.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .body).pointSize)
+        // Nest by setting ONLY the to-one `parent` side. Task.subtasks (inverse of
+        // Task.parent) and Project.tasks (inverse of Task.project) are both explicit
+        // inverses, so SwiftData maintains parent.subtasks — and drops the task from its
+        // former root position — automatically. The old code also did
+        // `parent.subtasks.append` + `project.tasks.removeAll` by hand; that manual array
+        // surgery double-wrote the collections SwiftData already maintains and left the
+        // relationship in a state that didn't survive save/reload — so the nesting was
+        // correct in memory but the task loaded back as a root task after quit+reopen.
+        // (Same hazard, same fix as reassignProject for moveTask.)
         task.parent = parent
-        if !parent.subtasks.contains(where: { $0.id == task.id }) {
-            parent.subtasks.append(task)
-        }
-        project.tasks.removeAll { $0.id == task.id }
-        context.insert(task)
         // Place at the end of the parent's subtasks and renumber both lists.
         task.sortIndex = (parent.subtasks.map(\.sortIndex).max() ?? -1) + 1
         reindex(Self.orderedSubtasks(of: parent))
@@ -129,6 +149,7 @@ final class TaskStore {
             store.unindentTask(task, fromParent: parent, into: project)
         }
         undoManager?.setActionName("Indent")
+        save()
     }
 
     func unindentTask(_ task: Task) {
@@ -142,6 +163,7 @@ final class TaskStore {
             store.indentTask(task, previousTask: parent)
         }
         undoManager?.setActionName("Unindent")
+        save()
     }
 
     /// Drag-to-nest: makes `task` a subtask of `newParent`. No-op if it would nest
@@ -165,6 +187,7 @@ final class TaskStore {
             store.undoManager?.setActionName("Move Subtask")
         }
         undoManager?.setActionName("Move Subtask")
+        save()
     }
 
     // MARK: - Reorder (drag to move)
@@ -198,6 +221,7 @@ final class TaskStore {
             store.undoManager?.setActionName("Move Task")
         }
         undoManager?.setActionName("Move Task")
+        save()
     }
 
     // MARK: - Move across projects
@@ -239,6 +263,7 @@ final class TaskStore {
             store.undoManager?.setActionName("Move Task to Project")
         }
         undoManager?.setActionName("Move Task to Project")
+        save()
     }
 
     /// Undo counterpart to moveTask: returns `task` (and subtasks) to `project` and
@@ -265,6 +290,7 @@ final class TaskStore {
             store.moveTask(task, to: current)
             store.undoManager?.setActionName("Move Task to Project")
         }
+        save()
     }
 
     /// Reassigns a task's project by setting only the to-one `project` side. With
@@ -276,9 +302,13 @@ final class TaskStore {
 
     @discardableResult
     func addSubtask(plainTitle: String = "", priority: Int = 1, to parent: Task, after afterSubtask: Task? = nil, before beforeSubtask: Task? = nil) -> Task {
+        // Setting `parent:` at init establishes the to-one side; SwiftData maintains the
+        // inverse (parent.subtasks) automatically. Do NOT also append manually — that
+        // double-writes the collection SwiftData already maintains (the same manual-surgery
+        // hazard that broke indent/unindent persistence). context.insert registers the new
+        // model; the relationship handles membership.
         let subtask = Task(plainTitle: plainTitle, priority: priority, project: parent.project, parent: parent)
         context.insert(subtask)
-        parent.subtasks.append(subtask)
         // The new subtask is incomplete, so a parent that was marked done is no longer
         // fully done — re-derive its completion from its subtasks.
         parent.syncDoneWithSubtasks()
@@ -301,6 +331,7 @@ final class TaskStore {
             store.deleteSubtask(subtask, from: parent)
         }
         undoManager?.setActionName("Add Subtask")
+        save()
         return subtask
     }
 
@@ -334,6 +365,7 @@ final class TaskStore {
             }
         }
         undoManager?.setActionName("Complete Task")
+        save()
     }
 
     func deleteTask(_ task: Task) {
@@ -363,6 +395,7 @@ final class TaskStore {
             store.restore(snapshot: snapshot, into: project, after: afterTask, at: createdAt)
         }
         undoManager?.setActionName("Delete Task")
+        save()
     }
 
     // MARK: - Private helpers
@@ -371,16 +404,19 @@ final class TaskStore {
         parent.subtasks.removeAll { $0.id == subtask.id }
         subtask.project.tasks.removeAll { $0.id == subtask.id }
         context.delete(subtask)
+        save()
     }
 
     fileprivate func unindentTask(_ task: Task, fromParent parent: Task, into project: Project) {
         // Restore the larger top-level (title3) title font when promoting back up.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .title3).pointSize)
+        // Promote by clearing ONLY the to-one `parent` side. SwiftData maintains the
+        // explicit inverses: parent.subtasks drops the task, and (because task.project is
+        // unchanged) Project.tasks already lists it as a root once parent is nil. The old
+        // manual `parent.subtasks.removeAll` + `project.tasks.append` double-wrote those
+        // collections and could leave the relationship in a state that didn't survive
+        // save/reload — the un-nest mirror of the indent persistence bug.
         task.parent = nil
-        parent.subtasks.removeAll { $0.id == task.id }
-        if !project.tasks.contains(where: { $0.id == task.id }) {
-            project.tasks.append(task)
-        }
         // Place at the end of the project's root tasks and renumber both lists.
         task.sortIndex = (Self.orderedRoots(of: project).filter { $0.id != task.id }.map(\.sortIndex).max() ?? -1) + 1
         reindex(Self.orderedRoots(of: project))
@@ -424,5 +460,6 @@ final class TaskStore {
             store.deleteTask(task, in: project)
         }
         undoManager?.setActionName("Delete Task")
+        save()
     }
 }

@@ -19,7 +19,8 @@ struct TaskDetailView: View {
 
                 // MARK: Title + description
                 VStack(alignment: .leading, spacing: 0) {
-                    RichDescriptionEditor(rtf: $task.titleRTF, font: .preferredFont(forTextStyle: .title1))
+                    RichDescriptionEditor(rtf: $task.titleRTF, font: .preferredFont(forTextStyle: .title1),
+                                          onCommit: { taskStore.save() })
                         .frame(minHeight: 38, maxHeight: 84)
 
                     Divider().padding(.vertical, 12)
@@ -32,7 +33,7 @@ struct TaskDetailView: View {
                                 .padding(.leading, 2)
                                 .allowsHitTesting(false)
                         }
-                        RichDescriptionEditor(rtf: $task.descRTF)
+                        RichDescriptionEditor(rtf: $task.descRTF, onCommit: { taskStore.save() })
                             .frame(minHeight: 60, maxHeight: 200)
                     }
                 }

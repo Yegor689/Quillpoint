@@ -356,7 +356,8 @@ struct TaskRowView: View {
                             onTab:           onIndent,
                             onShiftTab:      onUnindent,
                             onNavigateUp:    onNavigateUp,
-                            onNavigateDown:  onNavigateDown
+                            onNavigateDown:  onNavigateDown,
+                            onCommit:        { taskStore.save() }
                         )
                         .frame(maxWidth: .infinity, minHeight: lineHeight, alignment: .leading)
 

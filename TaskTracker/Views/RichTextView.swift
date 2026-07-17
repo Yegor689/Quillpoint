@@ -21,6 +21,10 @@ struct RichTitleField: NSViewRepresentable {
     var onShiftTab: () -> Void
     var onNavigateUp: () -> Void
     var onNavigateDown: () -> Void
+    /// Persists the edited text to disk. Typing only updates the model in memory (via the
+    /// `rtf` binding); without this, an edit is lost on quit/reopen unless some other action
+    /// flushes the context. Called on end-editing (focus loss) and debounced while typing.
+    var onCommit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -84,7 +88,14 @@ struct RichTitleField: NSViewRepresentable {
         // Also keep parent fresh for save() which writes back to @Binding
         context.coordinator.parent = self
 
-        let isEditing = tv.window?.firstResponder === tv
+        // Treat the view as "being edited" if EITHER it's currently first responder OR an
+        // editing session is open (began editing, hasn't ended). The session flag covers
+        // the transient re-render where first responder momentarily bounces while the user
+        // is still typing — most importantly when typing in a subtask makes the parent
+        // row's ForEach(sortedSubtasks) recompute. Without this, that re-render takes the
+        // overwrite branch below and clobbers the just-typed subtask text back to the older
+        // `rtf` binding value, which then persists as blank ("subtask turns blank" bug).
+        let isEditing = tv.window?.firstResponder === tv || context.coordinator.isEditingSession
         if !isEditing {
             let desired = attrStr(from: rtf, font: font)
             if tv.attributedString().string != desired.string || tv.textStorage?.length == 0 {
@@ -110,14 +121,21 @@ struct RichTitleField: NSViewRepresentable {
         let focusJustGained = isFocused && !context.coordinator.wasFocused
         context.coordinator.wasFocused = isFocused
 
-        if isFocused {
+        // Only PROGRAMMATICALLY take first responder on the false→true transition of
+        // isFocused — a row newly created or navigated-to. Grabbing it on EVERY re-render
+        // where isFocused is merely still true stole focus back when the user clicked away:
+        // a re-render (e.g. from onCommit's save) ran updateNSView on the old row while its
+        // isFocused hadn't yet flipped false, and makeFirstResponder yanked focus home. This
+        // hit SUBTASKS specifically — nested inside the parent row's recomputing ForEach, the
+        // subtask got one extra render pass with stale isFocused before the new focusedID
+        // reached it; top-level rows updated in the same pass and escaped. Gating on
+        // focusJustGained fixes both, and matches what the caret-to-end already required.
+        if isFocused && focusJustGained {
             DispatchQueue.main.async {
                 guard let window = tv.window, window.firstResponder !== tv else { return }
                 if let cur = window.firstResponder, !(cur is RichInlineTextView), cur is NSText { return }
                 window.makeFirstResponder(tv)
-                if focusJustGained {
-                    tv.setSelectedRange(NSRange(location: tv.string.utf16.count, length: 0))
-                }
+                tv.setSelectedRange(NSRange(location: tv.string.utf16.count, length: 0))
             }
         }
     }
@@ -132,6 +150,17 @@ struct RichTitleField: NSViewRepresentable {
         // Tracks the previous isFocused so caret-to-end fires only on the false→true
         // transition, not on re-renders while the row stays focused (issue #37).
         var wasFocused = false
+        // True from the moment editing begins until it ends. Unlike the instantaneous
+        // `firstResponder === tv` check, this stays true across the transient re-renders
+        // that happen WHILE the user is typing — in particular the parent row's
+        // ForEach(sortedSubtasks) recomputing when a subtask changes, during which first
+        // responder briefly bounces. Guarding the rtf→textStorage overwrite on this flag
+        // (not on firstResponder) stops that re-render from clobbering the just-typed
+        // subtask text back to the older binding value (the "subtask turns blank" bug).
+        var isEditingSession = false
+        // Debounces the disk-persist while typing, so we don't call ModelContext.save()
+        // on every keystroke but still persist shortly after the user pauses.
+        private var commitWorkItem: DispatchWorkItem?
 
         init(_ parent: RichTitleField) {
             self.parent = parent
@@ -139,6 +168,7 @@ struct RichTitleField: NSViewRepresentable {
         }
 
         func textDidBeginEditing(_ notification: Notification) {
+            isEditingSession = true
             actions.onFocus()
         }
 
@@ -147,7 +177,26 @@ struct RichTitleField: NSViewRepresentable {
             applyMarkdownShortcuts(tv)
             tv.checkTextInDocument(nil)
             tv.invalidateIntrinsicContentSize()
-            save(tv)
+            save(tv)                 // model (in-memory) updated every keystroke
+            scheduleCommit()         // …then flushed to disk shortly after typing pauses
+        }
+
+        /// Persist to disk (via onCommit → TaskStore.save) when editing ends — focus loss,
+        /// the row being torn down, or the window resigning key. This is the guaranteed
+        /// commit point for a typed title; the debounce is just a best-effort earlier flush.
+        ///
+        /// The context.save() is dispatched to the NEXT runloop tick, NOT run inline here.
+        /// Running it synchronously inside the end-editing notification mutates the model
+        /// mid-focus-transition, forcing an immediate re-render while first responder is
+        /// moving to the newly clicked row — which let the old row's updateNSView re-grab
+        /// focus (you couldn't click away from a subtask being edited). Deferring lets the
+        /// focus change settle first, then persists.
+        func textDidEndEditing(_ notification: Notification) {
+            isEditingSession = false
+            if let tv = notification.object as? NSTextView { save(tv) }
+            commitWorkItem?.cancel()
+            commitWorkItem = nil
+            DispatchQueue.main.async { [weak self] in self?.parent.onCommit() }
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -163,7 +212,28 @@ struct RichTitleField: NSViewRepresentable {
             }
         }
 
-        func forceSave() { if let tv = textView { save(tv) } }
+        /// Writes the current text to the model AND flushes it to disk immediately.
+        /// Called before structural actions (Tab/Enter) so the typed title is durable even
+        /// if the row is reparented or the user quits right after.
+        func forceSave() {
+            if let tv = textView { save(tv) }
+            commitNow()
+        }
+
+        /// Schedules a debounced disk commit ~0.6s after the last keystroke.
+        private func scheduleCommit() {
+            commitWorkItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.parent.onCommit() }
+            commitWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: item)
+        }
+
+        /// Cancels any pending debounce and commits to disk right now.
+        private func commitNow() {
+            commitWorkItem?.cancel()
+            commitWorkItem = nil
+            parent.onCommit()
+        }
 
         func textView(_ textView: NSTextView, doCommandBy sel: Selector) -> Bool {
             guard let tv = textView as? RichInlineTextView else { return false }
@@ -243,6 +313,9 @@ final class ActionBox {
 struct RichDescriptionEditor: NSViewRepresentable {
     @Binding var rtf: Data
     var font: NSFont = .preferredFont(forTextStyle: .body)
+    /// Persists the edited note to disk (typing only updates the model in memory). Called
+    /// on end-editing and debounced while typing. See RichTitleField.onCommit.
+    var onCommit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -291,6 +364,7 @@ struct RichDescriptionEditor: NSViewRepresentable {
         var parent: RichDescriptionEditor
         weak var textView: NSTextView?
         var isUpdating = false
+        private var commitWorkItem: DispatchWorkItem?
 
         init(_ parent: RichDescriptionEditor) { self.parent = parent }
 
@@ -303,10 +377,33 @@ struct RichDescriptionEditor: NSViewRepresentable {
                                       documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
                 parent.rtf = data
             }
+            scheduleCommit()
+        }
+
+        /// Guaranteed disk-commit point: editing ended (focus loss / teardown). Deferred to
+        /// the next runloop tick so the save() doesn't re-render mid-focus-transition (see
+        /// RichTitleField.Coordinator.textDidEndEditing for why).
+        func textDidEndEditing(_ notification: Notification) {
+            commitWorkItem?.cancel()
+            commitWorkItem = nil
+            DispatchQueue.main.async { [weak self] in self?.parent.onCommit() }
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             openLink(link)
+        }
+
+        private func scheduleCommit() {
+            commitWorkItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.parent.onCommit() }
+            commitWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: item)
+        }
+
+        private func commitNow() {
+            commitWorkItem?.cancel()
+            commitWorkItem = nil
+            parent.onCommit()
         }
     }
 }
@@ -477,8 +574,14 @@ class RichInlineTextView: NSTextView {
         return false
     }
 
-    func handleTab()      { actions?.onTab() }
-    func handleShiftTab() { actions?.onShiftTab() }
+    // Commit the typed text to the binding BEFORE indenting/outdenting. Tab arrives via
+    // doCommandBy, so the last keystroke's change may not have flushed to task.titleRTF
+    // yet — and onTab → TaskStore.indentTask immediately does
+    // `task.titleRTF = resizingFontRTF(task.titleRTF, …)`, which would resize the STALE
+    // (empty) RTF and overwrite the real title with nothing. forceSave() first makes the
+    // model current so indent reads the text the user actually typed. (#blank-on-indent)
+    func handleTab()      { coordinator?.forceSave(); actions?.onTab() }
+    func handleShiftTab() { coordinator?.forceSave(); actions?.onShiftTab() }
 
     private func applyTrait(_ trait: NSFontTraitMask) {
         guard let storage = textStorage else { return }

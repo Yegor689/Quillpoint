@@ -161,4 +161,69 @@ struct TaskStoreTests {
         // The diagnostic tripwire logged no membership violations.
         #expect(f.violations.isEmpty, "unexpected invariant violations: \(f.violations)")
     }
+
+    // MARK: - Indent preserves the title
+
+    /// Indenting a task resizes its title font (top-level → body). This must PRESERVE the
+    /// text — a regression here (or in resizingFontRTF) blanks the title. The view-layer
+    /// companion to this is RichInlineTextView.handleTab committing the typed text before
+    /// onTab fires, so indent reads the real title rather than a stale-empty one.
+    @Test func indentPreservesTitleText() throws {
+        let f = try Fixture()
+        let project = Project(title: "Inbox")
+        f.context.insert(project)
+        let first  = f.store.addTask(plainTitle: "Groceries", to: project)
+        let second = f.store.addTask(plainTitle: "Buy milk", to: project, after: first)
+
+        f.store.indentTask(second, previousTask: first)
+
+        #expect(second.parent?.id == first.id, "second should now be a subtask of first")
+        #expect(second.plainTitle == "Buy milk", "indent must not blank the title")
+        #expect(second.titleRTF.isEmpty == false)
+    }
+
+    // MARK: - Durability (persist-on-mutation)
+
+    /// Regression for the "new tasks/subtasks don't survive a rebuild" data loss.
+    /// SwiftData's autosave is deferred (flushes on a run-loop tick / clean quit), so an
+    /// insert that isn't saved is lost if the process is killed first — exactly what an
+    /// Xcode rebuild (SIGKILL) or a freeze does. Every mutation now flushes immediately.
+    /// `context.hasChanges == false` right after a mutation is the durability guarantee:
+    /// nothing is left sitting in memory waiting for an autosave that may never come.
+    /// (We assert hasChanges rather than reopening a second container, which SIGTRAPs on
+    /// the beta toolchain.)
+
+    @Test func addTaskFlushesImmediately() throws {
+        let f = try Fixture()
+        let project = Project(title: "Inbox")
+        f.context.insert(project)
+        f.store.save()   // flush the directly-inserted project first
+        #expect(f.context.hasChanges == false)
+
+        f.store.addTask(plainTitle: "Buy milk", to: project)
+        #expect(f.context.hasChanges == false, "addTask must leave no unsaved changes")
+    }
+
+    @Test func addSubtaskFlushesImmediately() throws {
+        let f = try Fixture()
+        let s = seed(f)
+        // Seeding inserted rows directly (bypassing the store), so flush that first.
+        f.store.save()
+        #expect(f.context.hasChanges == false)
+
+        f.store.addSubtask(plainTitle: "Rinse", to: s.clean)
+        #expect(f.context.hasChanges == false, "addSubtask must leave no unsaved changes")
+    }
+
+    @Test func deleteAndCompleteFlushImmediately() throws {
+        let f = try Fixture()
+        let s = seed(f)
+        f.store.save()
+
+        f.store.completeTask(s.clean)
+        #expect(f.context.hasChanges == false, "completeTask must flush")
+
+        f.store.deleteTask(s.clean, in: s.personal)
+        #expect(f.context.hasChanges == false, "deleteTask must flush")
+    }
 }
