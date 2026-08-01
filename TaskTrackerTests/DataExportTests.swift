@@ -9,42 +9,15 @@ import SwiftData
 @MainActor
 struct DataExportTests {
 
-    @MainActor
-    final class Store {
-        let container: ModelContainer
-        private let url: URL
-        init() throws {
-            let schema = Schema([Project.self, Task.self])
-            url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("DataExportTest-\(UUID().uuidString).store")
-            container = try ModelContainer(
-                for: schema,
-                configurations: ModelConfiguration(schema: schema, url: url))
-        }
-        deinit { try? FileManager.default.removeItem(at: url) }
-        var context: ModelContext { container.mainContext }
-    }
+    typealias Store = TestStore
 
-    /// Seeds Personal (root "Clean" with subtasks "Vacuum"+"Dishes") and Work ("Ship").
+    /// Seeds Personal (root "Clean" with subtasks "Vacuum"+"Dishes", Dishes done) and
+    /// Work ("Ship") with descriptions/priorities, saved — the export round-trip needs
+    /// the full shape. Delegates to the shared `seedPersonalWork`.
     @discardableResult
     private func seed(_ ctx: ModelContext) throws -> (personal: Project, work: Project) {
-        let personal = Project(title: "Personal", desc: "home")
-        let work = Project(title: "Work", desc: "job")
-        ctx.insert(personal); ctx.insert(work)
-
-        let clean = Task(plainTitle: "Clean", plainDesc: "deep clean", priority: 0, project: personal)
-        ctx.insert(clean); personal.tasks.append(clean)
-        let vacuum = Task(plainTitle: "Vacuum", priority: 1, project: personal, parent: clean)
-        let dishes = Task(plainTitle: "Dishes", priority: 2, project: personal, parent: clean)
-        for (i, s) in [vacuum, dishes].enumerated() {
-            ctx.insert(s); personal.tasks.append(s); clean.subtasks.append(s); s.sortIndex = i
-        }
-        dishes.setDone(true)
-
-        let ship = Task(plainTitle: "Ship", project: work)
-        ctx.insert(ship); work.tasks.append(ship)
-        try ctx.save()
-        return (personal, work)
+        let s = try seedPersonalWork(into: ctx, descriptions: true, completeDishes: true, save: true)
+        return (s.personal, s.work)
     }
 
     // MARK: - Export

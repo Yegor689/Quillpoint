@@ -16,57 +16,31 @@ struct TaskStoreTests {
     /// one test process (see DataExportTests / SubtaskCompletionTests).
     @MainActor
     final class Fixture {
-        let container: ModelContainer
+        let testStore = try! TestStore(prefix: "TaskStoreTest")
         let store: TaskStore
         let undoManager = UndoManager()
         let diagnostics = DiagnosticLog()
-        private let url: URL
 
         init() throws {
-            let schema = Schema([Project.self, Task.self])
-            url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("TaskStoreTest-\(UUID().uuidString).store")
-            container = try ModelContainer(
-                for: schema,
-                configurations: ModelConfiguration(schema: schema, url: url))
-            store = TaskStore(context: container.mainContext, diagnostics: diagnostics)
+            store = TaskStore(context: testStore.context, diagnostics: diagnostics)
             store.undoManager = undoManager
         }
 
-        deinit { try? FileManager.default.removeItem(at: url) }
-
-        var context: ModelContext { container.mainContext }
+        var context: ModelContext { testStore.context }
 
         /// Entries flagged as invariant violations (the "vanished task" tripwire).
         var violations: [String] { diagnostics.entries.filter { $0.contains("INVARIANT") } }
     }
 
-    /// Seeds two projects; Personal has one root task ("Clean") with two subtasks,
-    /// Work has one root ("Ship"). Returns the pieces the tests assert on.
-    private func seed(_ f: Fixture) -> (personal: Project, work: Project, clean: Task, vacuum: Task, dishes: Task) {
-        let ctx = f.context
-        let personal = Project(title: "Personal")
-        let work = Project(title: "Work")
-        ctx.insert(personal); ctx.insert(work)
-
-        let clean = Task(plainTitle: "Clean", project: personal)
-        ctx.insert(clean); personal.tasks.append(clean)
-
-        let vacuum = Task(plainTitle: "Vacuum", project: personal, parent: clean)
-        let dishes = Task(plainTitle: "Dishes", project: personal, parent: clean)
-        for (i, s) in [vacuum, dishes].enumerated() {
-            ctx.insert(s); personal.tasks.append(s); clean.subtasks.append(s); s.sortIndex = i
-        }
-
-        let ship = Task(plainTitle: "Ship", project: work)
-        ctx.insert(ship); work.tasks.append(ship)
-
-        return (personal, work, clean, vacuum, dishes)
+    /// Seeds the shared Personal/Work fixture (see `seedPersonalWork`).
+    @discardableResult
+    private func seed(_ f: Fixture) throws -> PersonalWorkSeed {
+        try seedPersonalWork(into: f.context)
     }
 
     @Test func moveTaskReassignsRootAndItsSubtasksToNewProject() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
 
         f.store.moveTask(s.clean, to: s.work)
 
@@ -85,7 +59,7 @@ struct TaskStoreTests {
 
     @Test func moveTaskIsUndoable() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
 
         f.store.moveTask(s.clean, to: s.work)
         #expect(s.clean.project.id == s.work.id)
@@ -102,7 +76,7 @@ struct TaskStoreTests {
 
     @Test func moveTaskIgnoresSubtasksAndSameProject() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
 
         // A subtask is not a root task — moving it directly is a no-op.
         f.store.moveTask(s.vacuum, to: s.work)
@@ -122,7 +96,7 @@ struct TaskStoreTests {
     /// invariant tripwire.
     @Test func moveTaskWithSubtasksAppearsInNewProjectAfterSaveAndRefetch() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
         let cleanID = s.clean.id, personalID = s.personal.id, workID = s.work.id
         try f.context.save()
 
@@ -206,7 +180,7 @@ struct TaskStoreTests {
 
     @Test func addSubtaskFlushesImmediately() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
         // Seeding inserted rows directly (bypassing the store), so flush that first.
         f.store.save()
         #expect(f.context.hasChanges == false)
@@ -217,7 +191,7 @@ struct TaskStoreTests {
 
     @Test func deleteAndCompleteFlushImmediately() throws {
         let f = try Fixture()
-        let s = seed(f)
+        let s = try seed(f)
         f.store.save()
 
         f.store.completeTask(s.clean)

@@ -11,19 +11,10 @@ struct SubtaskCompletionTests {
 
     @MainActor
     final class Fixture {
-        let container: ModelContainer
+        let testStore = try! TestStore(prefix: "SubtaskTest")
         let store: TaskStore
-        private let url: URL
-        init() throws {
-            let schema = Schema([Project.self, Task.self])
-            url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("SubtaskTest-\(UUID().uuidString).store")
-            container = try ModelContainer(for: schema,
-                configurations: ModelConfiguration(schema: schema, url: url))
-            store = TaskStore(context: container.mainContext)
-        }
-        deinit { try? FileManager.default.removeItem(at: url) }
-        var context: ModelContext { container.mainContext }
+        init() throws { store = TaskStore(context: testStore.context) }
+        var context: ModelContext { testStore.context }
     }
 
     /// Parent with two subtasks. Returns (parent, subA, subB).
