@@ -58,8 +58,9 @@ pure SwiftUI and SwiftData.
 The app is a SwiftUI `NavigationSplitView` over a SwiftData store. UI lives in
 `Views/`, with `@Observable` stores (`TaskStore`, `ProjectStore`,
 `BackupManager`, `ReminderManager`, `AppSettings`) handling mutations and side
-effects. Backups use SQLite's online-backup API for consistent, WAL-safe
-snapshots, and restore happens in place so the window updates live. See
+effects. Backups snapshot the live store with SQLite's `VACUUM INTO` for a
+consistent, self-contained copy (no `-wal`/`-shm` sidecars), and restore happens
+in place so the window updates live. See
 [docs/MODEL.md](docs/MODEL.md) for the data model and a view/manager breakdown.
 
 ## License

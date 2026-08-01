@@ -120,7 +120,7 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 |------|---------|
 | `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration |
 | `ProjectStore` | Project mutations |
-| `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store via SQLite's online backup API (consistent even with uncommitted WAL data); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
+| `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store with SQLite's `VACUUM INTO` — a WAL checkpoint then a single-transaction copy, so the snapshot is consistent and self-contained (no `-wal`/`-shm` sidecars); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
 | `ReminderManager` | Schedules local notifications and handles their actions |
 | `AppSettings` | Persisted user preferences (theme, accent, defaults), surfaced in Settings |
 
