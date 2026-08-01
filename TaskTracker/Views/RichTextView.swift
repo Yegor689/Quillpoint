@@ -88,13 +88,9 @@ struct RichTitleField: NSViewRepresentable {
         // Also keep parent fresh for save() which writes back to @Binding
         context.coordinator.parent = self
 
-        // Treat the view as "being edited" if EITHER it's currently first responder OR an
-        // editing session is open (began editing, hasn't ended). The session flag covers
-        // the transient re-render where first responder momentarily bounces while the user
-        // is still typing — most importantly when typing in a subtask makes the parent
-        // row's ForEach(sortedSubtasks) recompute. Without this, that re-render takes the
-        // overwrite branch below and clobbers the just-typed subtask text back to the older
-        // `rtf` binding value, which then persists as blank ("subtask turns blank" bug).
+        // "Being edited" = first responder OR an open editing session (see isEditingSession):
+        // the session flag keeps the overwrite branch below from clobbering just-typed text
+        // during a transient re-render where first responder bounces.
         let isEditing = tv.window?.firstResponder === tv || context.coordinator.isEditingSession
         if !isEditing {
             let desired = attrStr(from: rtf, font: font)
@@ -150,13 +146,11 @@ struct RichTitleField: NSViewRepresentable {
         // Tracks the previous isFocused so caret-to-end fires only on the false→true
         // transition, not on re-renders while the row stays focused (issue #37).
         var wasFocused = false
-        // True from the moment editing begins until it ends. Unlike the instantaneous
-        // `firstResponder === tv` check, this stays true across the transient re-renders
-        // that happen WHILE the user is typing — in particular the parent row's
-        // ForEach(sortedSubtasks) recomputing when a subtask changes, during which first
-        // responder briefly bounces. Guarding the rtf→textStorage overwrite on this flag
-        // (not on firstResponder) stops that re-render from clobbering the just-typed
-        // subtask text back to the older binding value (the "subtask turns blank" bug).
+        // True while editing (begin→end). Unlike an instantaneous `firstResponder === tv`
+        // check, it stays true across the transient re-renders while typing — e.g. a
+        // subtask's parent row recomputing its ForEach, during which first responder
+        // briefly bounces. updateNSView guards the rtf→textStorage overwrite on this so
+        // that re-render can't clobber the just-typed text ("subtask turns blank" bug).
         var isEditingSession = false
         // Debounces the disk-persist while typing, so we don't call ModelContext.save()
         // on every keystroke but still persist shortly after the user pauses.

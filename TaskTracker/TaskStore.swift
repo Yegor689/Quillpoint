@@ -128,15 +128,11 @@ final class TaskStore {
         // Re-render the title at the subtask (body) font size so it doesn't stay
         // at the larger top-level (title3) size it was created with.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .body).pointSize)
-        // Nest by setting ONLY the to-one `parent` side. Task.subtasks (inverse of
-        // Task.parent) and Project.tasks (inverse of Task.project) are both explicit
-        // inverses, so SwiftData maintains parent.subtasks — and drops the task from its
-        // former root position — automatically. The old code also did
-        // `parent.subtasks.append` + `project.tasks.removeAll` by hand; that manual array
-        // surgery double-wrote the collections SwiftData already maintains and left the
-        // relationship in a state that didn't survive save/reload — so the nesting was
-        // correct in memory but the task loaded back as a root task after quit+reopen.
-        // (Same hazard, same fix as reassignProject for moveTask.)
+        // Nest by setting ONLY the to-one `parent` side; the explicit inverses let
+        // SwiftData maintain parent.subtasks and drop the task from its root position.
+        // Setting them by hand (append/removeAll) double-writes those collections and the
+        // nesting doesn't survive save/reload — the task loads back as a root task. (Same
+        // hazard/fix as reassignProject.)
         task.parent = parent
         // Place at the end of the parent's subtasks and renumber both lists.
         task.sortIndex = (parent.subtasks.map(\.sortIndex).max() ?? -1) + 1
@@ -302,11 +298,8 @@ final class TaskStore {
 
     @discardableResult
     func addSubtask(plainTitle: String = "", priority: Int = 1, to parent: Task, after afterSubtask: Task? = nil, before beforeSubtask: Task? = nil) -> Task {
-        // Setting `parent:` at init establishes the to-one side; SwiftData maintains the
-        // inverse (parent.subtasks) automatically. Do NOT also append manually — that
-        // double-writes the collection SwiftData already maintains (the same manual-surgery
-        // hazard that broke indent/unindent persistence). context.insert registers the new
-        // model; the relationship handles membership.
+        // `parent:` at init sets the to-one side; the inverse maintains parent.subtasks.
+        // Don't append manually too — same double-write hazard as indentTask.
         let subtask = Task(plainTitle: plainTitle, priority: priority, project: parent.project, parent: parent)
         context.insert(subtask)
         // The new subtask is incomplete, so a parent that was marked done is no longer
@@ -410,12 +403,8 @@ final class TaskStore {
     fileprivate func unindentTask(_ task: Task, fromParent parent: Task, into project: Project) {
         // Restore the larger top-level (title3) title font when promoting back up.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .title3).pointSize)
-        // Promote by clearing ONLY the to-one `parent` side. SwiftData maintains the
-        // explicit inverses: parent.subtasks drops the task, and (because task.project is
-        // unchanged) Project.tasks already lists it as a root once parent is nil. The old
-        // manual `parent.subtasks.removeAll` + `project.tasks.append` double-wrote those
-        // collections and could leave the relationship in a state that didn't survive
-        // save/reload — the un-nest mirror of the indent persistence bug.
+        // Clear ONLY the to-one `parent` side (the un-nest mirror of indentTask); the
+        // explicit inverses drop it from parent.subtasks and list it as a root again.
         task.parent = nil
         // Place at the end of the project's root tasks and renumber both lists.
         task.sortIndex = (Self.orderedRoots(of: project).filter { $0.id != task.id }.map(\.sortIndex).max() ?? -1) + 1

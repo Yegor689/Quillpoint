@@ -70,16 +70,9 @@ class Task {
     @Relationship(inverse: \Task.subtasks) var parent: Task?
     @Relationship(deleteRule: .cascade) var subtasks: [Task]
 
-    // MARK: Plain-text cache (performance)
-    //
-    // `plainTitle`/`plainDesc` are read constantly — once per row per SwiftUI render
-    // (the row body reads plainDesc twice) and once per task per keystroke while
-    // searching. Decoding the RTF `Data` into an NSAttributedString on every read is the
-    // dominant cost with many tasks (measured ~269 ms to render a 1000-task list vs
-    // ~5 ms cached, ~48×). These @Transient slots cache the decoded string alongside the
-    // exact RTF bytes it came from; a read re-decodes ONLY when the bytes differ from
-    // what's cached, so the cache can never go stale (any edit changes the Data → miss →
-    // re-decode). @Transient keeps them out of the persisted store.
+    // Caches the decoded plain text so hot paths (row rendering, search) don't re-parse
+    // the RTF on every read. Keyed by the RTF bytes, so any edit misses the cache and
+    // re-decodes — it can't go stale. @Transient keeps these out of the store.
     @Transient private var cachedTitle: (rtf: Data, text: String)?
     @Transient private var cachedDesc:  (rtf: Data, text: String)?
 
@@ -123,8 +116,7 @@ class Task {
         set { priority = newValue.rawValue }
     }
 
-    /// Plain text of the title, decoded from `titleRTF`. Cached against the current RTF
-    /// bytes so repeated reads (per render, per search keystroke) don't re-parse the RTF.
+    /// Plain text of the title, decoded from `titleRTF` (cached — see `cachedTitle`).
     var plainTitle: String {
         if let c = cachedTitle, c.rtf == titleRTF { return c.text }
         let text = Task.plain(from: titleRTF)
@@ -132,7 +124,7 @@ class Task {
         return text
     }
 
-    /// Plain text of the description, decoded from `descRTF`. Cached like `plainTitle`.
+    /// Plain text of the description, decoded from `descRTF` (cached).
     var plainDesc: String {
         if let c = cachedDesc, c.rtf == descRTF { return c.text }
         let text = Task.plain(from: descRTF)

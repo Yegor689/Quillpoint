@@ -12,7 +12,7 @@ import SwiftData
 // process. Each TestStore uses a unique temp URL and removes it on deinit.
 
 /// An isolated SwiftData store for a test. Holds the container and cleans up its
-/// on-disk file when it deallocates. Add a `TaskStore` via `taskStore` when needed.
+/// on-disk file when it deallocates.
 @MainActor
 final class TestStore {
     let container: ModelContainer
