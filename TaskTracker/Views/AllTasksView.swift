@@ -22,10 +22,11 @@ struct AllTasksView: View {
     @State private var taskPendingDelete: Task?
 
     var allTasks: [Task] {
-        projects
-            .flatMap { $0.tasks.filter { $0.parent == nil } }
-            .filter { $0.matchesSearch(searchText) && filter.matches($0) }
-            .sorted(by: TaskListView.taskOrder)
+        TaskListView.ordered(
+            projects
+                .flatMap { $0.tasks.filter { $0.parent == nil } }
+                .filter { $0.matchesSearch(searchText) && filter.matches($0) }
+        )
     }
 
     var groupedSections: [(header: String, tasks: [Task])] {
@@ -59,7 +60,10 @@ struct AllTasksView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                // LazyVStack so large task lists only build the rows scrolled into view;
+                // each row hosts a live NSTextView, so an eager VStack materialized them
+                // all at once and made big lists slow (see TaskListView).
+                LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(groupedSections, id: \.header) { section in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {

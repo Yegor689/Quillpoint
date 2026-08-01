@@ -49,15 +49,15 @@ struct TaskListView: View {
     // Flat ordered list: each root task followed by its visible subtasks.
     var flatTasks: [Task] {
         filteredTasks.flatMap { task -> [Task] in
-            let subs = task.subtasks.sorted(by: Self.taskOrder).filter { filter.matches($0) }
+            let subs = Self.ordered(task.subtasks.filter { filter.matches($0) })
             return [task] + subs
         }
     }
 
     var filteredTasks: [Task] {
-        project.tasks
-            .filter { $0.parent == nil && $0.matchesSearch(searchText) && filter.matches($0) }
-            .sorted(by: Self.taskOrder)
+        Self.ordered(
+            project.tasks.filter { $0.parent == nil && $0.matchesSearch(searchText) && filter.matches($0) }
+        )
     }
 
     /// Dragging is only meaningful when the list shows its natural manual order
@@ -85,10 +85,42 @@ struct TaskListView: View {
         return lhs.createdAt < rhs.createdAt
     }
 
+    /// Sorts tasks by `taskOrder`, but reading each task's ordering fields exactly ONCE.
+    ///
+    /// `sorted(by: taskOrder)` calls the comparator O(n log n)–O(n²) times, and every call
+    /// reads `isDone`/`sortIndex`/`completedAt`/`createdAt` through SwiftData's backing
+    /// store — cheap individually, ruinous in aggregate: at ~1,500 tasks the app hung
+    /// entirely (the comparator ran millions of times, each doing store lookups). Here we
+    /// extract each task's fields into a plain value key once (O(n) store reads), sort the
+    /// keys (plain Ints/Dates, no store access), and return the tasks in that order.
+    static func ordered(_ tasks: [Task]) -> [Task] {
+        struct Key { let isDone: Bool; let sortIndex: Int; let created: Date; let completed: Date? }
+        return tasks
+            .map { (task: $0, key: Key(isDone: $0.isDone, sortIndex: $0.sortIndex,
+                                       created: $0.createdAt, completed: $0.completedAt)) }
+            .sorted { a, b in
+                let l = a.key, r = b.key
+                if l.isDone != r.isDone { return !l.isDone }
+                if l.isDone {
+                    return (l.completed ?? l.created) > (r.completed ?? r.created)
+                }
+                if l.sortIndex != r.sortIndex { return l.sortIndex < r.sortIndex }
+                return l.created < r.created
+            }
+            .map(\.task)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
+                // LazyVStack (not VStack): only rows scrolled into view are built. A plain
+                // VStack instantiates EVERY row up front — and each root/subtask row hosts a
+                // live NSTextView (RichTitleField) — so a large project materialized
+                // thousands of AppKit text views at once, which is what made big lists crawl
+                // and titles render blank while the UI caught up. Lazy building keeps only
+                // the visible rows realized. Drag geometry (RowMidYKey) still works: only
+                // on-screen rows report their midY, and you can only reorder visible rows.
+                LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(filteredTasks) { task in
                         TaskRowView(
                             task: task,
@@ -308,7 +340,7 @@ struct TaskRowView: View {
     // bottom (newest completion on top of the done group), filtered to those the
     // current list filter shows.
     private var sortedSubtasks: [Task] {
-        task.subtasks.filter(subtaskFilter).sorted(by: TaskListView.taskOrder)
+        TaskListView.ordered(task.subtasks.filter(subtaskFilter))
     }
 
     private var iconSize: CGFloat  { isSubtask ? 18 : 22 }
