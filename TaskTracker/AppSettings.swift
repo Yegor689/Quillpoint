@@ -99,6 +99,12 @@ final class AppSettings {
         didSet { defaults.set(defaultLandingRaw, forKey: Keys.defaultLanding) }
     }
 
+    /// Whether the Upcoming view appears in the sidebar. Off by default — opt in from
+    /// Settings if you use reminders and want the cross-project due list.
+    var showUpcoming: Bool {
+        didSet { defaults.set(showUpcoming, forKey: Keys.showUpcoming) }
+    }
+
     private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -111,6 +117,7 @@ final class AppSettings {
         static let snoozeMinutes         = "settings.snoozeMinutes"
         static let defaultReminderPreset = "settings.defaultReminderPreset"
         static let defaultLanding        = "settings.defaultLanding"
+        static let showUpcoming          = "settings.showUpcoming"
     }
 
     init() {
@@ -124,6 +131,7 @@ final class AppSettings {
         snoozeMinutes            = d.object(forKey: Keys.snoozeMinutes) as? Int ?? 60
         defaultReminderPresetRaw = d.string(forKey: Keys.defaultReminderPreset) ?? ""
         defaultLandingRaw        = d.string(forKey: Keys.defaultLanding) ?? ""
+        showUpcoming             = d.object(forKey: Keys.showUpcoming) as? Bool ?? false
     }
 
     /// The filter a fresh launch should use, or nil to keep the last-used one.
@@ -140,6 +148,7 @@ final class AppSettings {
         snoozeMinutes            = 60
         defaultReminderPresetRaw = ""
         defaultLandingRaw        = ""
+        showUpcoming             = false
     }
 }
 

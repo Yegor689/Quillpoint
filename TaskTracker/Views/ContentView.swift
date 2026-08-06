@@ -47,6 +47,11 @@ struct ContentView: View {
             }
         }
         .onChange(of: selection) { persistSelection() }
+        // If Upcoming is turned off in Settings while it's the active view, its sidebar row
+        // disappears — redirect to All Projects so the detail pane doesn't strand there.
+        .onChange(of: settings.showUpcoming) { _, shown in
+            if !shown && selection == .upcoming { selection = .all }
+        }
     }
 
     /// The detail pane for the current sidebar selection.
@@ -81,7 +86,7 @@ struct ContentView: View {
     private func initialSelection() -> SidebarSelection {
         switch settings.defaultLandingRaw {
         case "all":      return .all
-        case "upcoming": return .upcoming
+        case "upcoming": return settings.showUpcoming ? .upcoming : .all
         default:
             if settings.restoreLastProject {
                 return restoredSelection() ?? projects.first.map { .project($0) } ?? .all

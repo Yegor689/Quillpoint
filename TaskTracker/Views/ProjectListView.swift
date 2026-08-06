@@ -3,6 +3,7 @@ import SwiftData
 
 struct ProjectListView: View {
     @Environment(ProjectStore.self) private var projectStore
+    @Environment(AppSettings.self) private var settings
     @Environment(\.openSettings) private var openSettings
     @Query(sort: \Project.title) private var projects: [Project]
 
@@ -28,21 +29,18 @@ struct ProjectListView: View {
                 .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
                 .listRowBackground(Color.clear)
 
-            SidebarLinkRow(title: "Upcoming", systemImage: "bell.badge", isSelected: selection == .upcoming)
-                .onTapGesture { selection = .upcoming }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
-                .listRowBackground(Color.clear)
-
-            SidebarLinkRow(title: "Report", systemImage: "chart.bar.xaxis", isSelected: selection == .report)
-                .onTapGesture { selection = .report }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
-                .listRowBackground(Color.clear)
+            if settings.showUpcoming {
+                SidebarLinkRow(title: "Upcoming", systemImage: "bell.badge", isSelected: selection == .upcoming)
+                    .onTapGesture { selection = .upcoming }
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                    .listRowBackground(Color.clear)
+            }
 
             // A quiet header only over the projects group; the views above (All Projects /
-            // Upcoming / Report) stay unlabeled as the sidebar's "home" items. Header shown
-            // only when there ARE projects — the empty state is handled by the overlay.
+            // Upcoming) stay unlabeled as the sidebar's "home" items. Report lives in the
+            // toolbar instead, to keep the sidebar list uncluttered. Header shown only when
+            // there ARE projects — the empty state is handled by the overlay.
             Section(projects.isEmpty ? "" : "Projects") {
                 ForEach(projects) { project in
                     ProjectRowView(project: project, isSelected: selection == .project(project))
@@ -103,6 +101,16 @@ struct ProjectListView: View {
             }
         }
         .toolbar {
+            // Report opens from the toolbar rather than a sidebar row, keeping the sidebar
+            // list to just All Projects / Upcoming / your projects. The button highlights
+            // when Report is the active view.
+            ToolbarItem {
+                Button { selection = .report } label: {
+                    Label("Report", systemImage: "chart.bar.xaxis")
+                }
+                .help("Report")
+                .foregroundStyle(selection == .report ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            }
             ToolbarItem {
                 Button { isAddingProject = true } label: {
                     Label("Add Project", systemImage: "plus")

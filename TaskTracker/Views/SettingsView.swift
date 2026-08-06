@@ -26,6 +26,8 @@ struct SettingsView: View {
             }
 
             Section("Reminders") {
+                Toggle("Show Upcoming in the sidebar", isOn: $settings.showUpcoming)
+
                 Picker("Snooze reminders for", selection: $settings.snoozeMinutes) {
                     Text("15 minutes").tag(15)
                     Text("1 hour").tag(60)
