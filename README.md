@@ -19,7 +19,7 @@ of your way. And because losing a to-do list is its own small disaster, every
 restore snapshots your current data first, so nothing you do is one click from
 gone.
 
-![Quillpoint showing the All Projects view grouped by priority](assets/screenshot.png)
+![Quillpoint showing the All Projects view grouped by priority](assets/screenshot-v2.png)
 
 ## Why Quillpoint
 
