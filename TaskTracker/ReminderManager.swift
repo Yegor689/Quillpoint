@@ -7,6 +7,7 @@ private let log = Logger(subsystem: "co.TaskTracker", category: "ReminderManager
 @Observable
 final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
     static let markDoneActionID   = "MARK_DONE"
+    static let snoozeActionID     = "SNOOZE_1H"
     static let categoryID         = "TASK_REMINDER"
     static let taskIDKey          = "taskID"
 
@@ -66,9 +67,16 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
             title: "Mark Done",
             options: [.foreground]
         )
+        // Snooze reschedules the reminder later (by the user's chosen duration); no need to
+        // foreground the app. The exact interval is applied when the action is handled.
+        let snooze = UNNotificationAction(
+            identifier: Self.snoozeActionID,
+            title: "Snooze",
+            options: []
+        )
         let category = UNNotificationCategory(
             identifier: Self.categoryID,
-            actions: [markDone],
+            actions: [markDone, snooze],
             intentIdentifiers: [],
             options: []
         )
@@ -106,6 +114,18 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [taskID.uuidString])
     }
 
+    /// Re-registers every future reminder at launch so the app — not the system's pending
+    /// queue — is the source of truth. Pending notifications normally persist across
+    /// quits, but they can be dropped (OS resets, the 64-pending limit, a notification-DB
+    /// wipe); without this a dropped reminder would silently never fire. `add` with the
+    /// same identifier replaces any existing request, so re-scheduling is idempotent and
+    /// safe to run every launch. Past-due reminders are pruned separately before this runs.
+    func rescheduleAll(_ tasks: [Task]) {
+        for task in tasks where (task.reminderDate ?? .distantPast) > Date() {
+            schedule(task: task)
+        }
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     // Bring app to front when notification is tapped
@@ -113,9 +133,15 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
         let userInfo = response.notification.request.content.userInfo
-        if response.actionIdentifier == Self.markDoneActionID,
-           let idStr = userInfo[Self.taskIDKey] as? String {
-            NotificationCenter.default.post(name: .markTaskDone, object: idStr)
+        if let idStr = userInfo[Self.taskIDKey] as? String {
+            switch response.actionIdentifier {
+            case Self.markDoneActionID:
+                NotificationCenter.default.post(name: .markTaskDone, object: idStr)
+            case Self.snoozeActionID:
+                NotificationCenter.default.post(name: .snoozeReminder, object: idStr)
+            default:
+                break
+            }
         }
         completionHandler()
     }
@@ -140,4 +166,5 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
 extension Notification.Name {
     static let markTaskDone   = Notification.Name("markTaskDone")
     static let reminderFired  = Notification.Name("reminderFired")
+    static let snoozeReminder = Notification.Name("snoozeReminder")
 }

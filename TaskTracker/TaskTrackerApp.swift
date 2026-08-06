@@ -206,6 +206,20 @@ struct TaskTrackerApp: App {
                     task.reminderDate = nil
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .snoozeReminder)) { note in
+                guard let idStr = note.object as? String,
+                      let uuid  = UUID(uuidString: idStr) else { return }
+                // "Snooze 1 hour": push the reminder an hour from now and reschedule it,
+                // so a nudge you can't act on comes back later instead of being lost.
+                let descriptor = FetchDescriptor<Task>(
+                    predicate: #Predicate { $0.id == uuid }
+                )
+                if let task = try? container.mainContext.fetch(descriptor).first {
+                    task.reminderDate = Date().addingTimeInterval(TimeInterval(settings.snoozeMinutes * 60))
+                    services?.reminderManager.schedule(task: task)
+                    services?.taskStore.save()
+                }
+            }
     }
 
     /// "Try Again": re-attempts bring-up against the SAME (untouched) store. If it now
@@ -411,20 +425,31 @@ struct TaskTrackerApp: App {
         }
     }
 
-    /// Clears reminders whose time has already passed (e.g. fired or were missed while the app was closed)
-    /// so the UI never shows a stale past reminder.
+    /// Launch reminder housekeeping: clears reminders whose time has already passed (fired
+    /// or missed while the app was closed) so the UI never shows a stale past date, then
+    /// re-schedules every remaining future reminder so the app is the source of truth even
+    /// if the system dropped a pending notification. See ReminderManager.rescheduleAll.
     private func clearExpiredReminders() {
         guard let services else { return }
         let container = services.container
         let reminderManager = services.reminderManager
         let now = Date()
-        let descriptor = FetchDescriptor<Task>(
+
+        let expiredDescriptor = FetchDescriptor<Task>(
             predicate: #Predicate { $0.reminderDate != nil && $0.reminderDate! < now }
         )
-        guard let expired = try? container.mainContext.fetch(descriptor) else { return }
-        for task in expired {
-            task.reminderDate = nil
-            reminderManager.cancel(taskID: task.id)
+        if let expired = try? container.mainContext.fetch(expiredDescriptor) {
+            for task in expired {
+                task.reminderDate = nil
+                reminderManager.cancel(taskID: task.id)
+            }
+        }
+
+        let futureDescriptor = FetchDescriptor<Task>(
+            predicate: #Predicate { $0.reminderDate != nil && $0.reminderDate! >= now }
+        )
+        if let future = try? container.mainContext.fetch(futureDescriptor) {
+            reminderManager.rescheduleAll(future)
         }
     }
 }
