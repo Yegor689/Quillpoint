@@ -39,21 +39,21 @@ enum WhatsNew {
     /// Highlights for the current release. Re-author this list each version.
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
-            icon: "square.and.pencil",
-            title: "Your edits save right away",
-            detail: "New tasks and subtasks — and any title or note you type — are now saved the moment you make them. They'll be there when you reopen Quillpoint, even if you don't switch away first."),
+            icon: "chart.bar.xaxis",
+            title: "See what you got done",
+            detail: "The new Report view lays out the tasks you completed, day by day, over any date range you pick — with a quick summary of how much you created and finished."),
         WhatsNewItem(
-            icon: "list.bullet.indent",
-            title: "Subtasks stay put",
-            detail: "Indenting a task into a subtask (and moving one back out) now sticks. Your nesting is exactly as you left it after you quit and reopen."),
+            icon: "bell.badge",
+            title: "Upcoming reminders in one place",
+            detail: "Turn on Upcoming in Settings to gather every task with a reminder — across all your projects — into a single list, grouped by when it's due: Overdue, Today, Tomorrow, This week, Later."),
         WhatsNewItem(
-            icon: "clock.arrow.circlepath",
-            title: "Stronger, safer backups",
-            detail: "Backups are captured more reliably, and restoring is fail-safe — if a restore can't complete, your current data is never moved or emptied, and Quillpoint tells you what happened instead of coming up blank."),
+            icon: "clock.badge.checkmark",
+            title: "Faster reminders, and Snooze",
+            detail: "Set a reminder with one-tap presets like \"Tomorrow 9 AM,\" and snooze a notification you can't act on right now. Choose your default preset and snooze length in Settings."),
         WhatsNewItem(
-            icon: "checkmark.shield",
-            title: "A heads-up if something looks off",
-            detail: "If the data Quillpoint opens looks older than what you had last time, it now warns you and helps you restore a backup — so you can recover before piling new work onto the wrong copy."),
+            icon: "bolt.fill",
+            title: "Snappier with lots of tasks",
+            detail: "Big task lists are much faster to scroll and search — the app no longer slows to a crawl when a project has hundreds or thousands of tasks."),
     ]
 }
 
