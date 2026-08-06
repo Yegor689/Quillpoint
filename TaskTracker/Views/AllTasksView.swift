@@ -147,21 +147,24 @@ struct AllTasksView: View {
                 ToolbarItem(placement: .navigation) {
                     ProjectTitleMenu(selection: $selection)
                 }
-                ToolbarItem(placement: .principal) {
+                // Group the controls on the trailing side (before search), the way native
+                // macOS apps lay out toolbars — title leading, controls trailing — rather
+                // than centering a segmented control, which leaves awkward gaps on a wide
+                // window. ToolbarItemGroup keeps them together as one cluster.
+                ToolbarItemGroup(placement: .primaryAction) {
                     Picker("Filter", selection: $filter) {
                         ForEach(TaskFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 220)
-                }
-                ToolbarItem(placement: .primaryAction) {
+                    .frame(width: 200)
+
                     Picker("Group By", selection: $grouping) {
                         ForEach(TaskGrouping.allCases, id: \.self) { g in
                             Text(g.rawValue).tag(g)
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 160)
+                    .frame(width: 150)
                     .help("Group by")
                 }
             }

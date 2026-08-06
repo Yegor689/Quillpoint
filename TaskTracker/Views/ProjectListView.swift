@@ -3,6 +3,7 @@ import SwiftData
 
 struct ProjectListView: View {
     @Environment(ProjectStore.self) private var projectStore
+    @Environment(\.openSettings) private var openSettings
     @Query(sort: \Project.title) private var projects: [Project]
 
     @Binding var selection: SidebarSelection?
@@ -21,13 +22,28 @@ struct ProjectListView: View {
         // the List itself has no `selection:` binding, so no native highlight is
         // drawn (that native highlight was the earlier "bleed" bug).
         List {
-            AllProjectsRow(isSelected: selection == .all)
+            SidebarLinkRow(title: "All Projects", systemImage: "tray.2", isSelected: selection == .all)
                 .onTapGesture { selection = .all }
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
                 .listRowBackground(Color.clear)
 
-            Section {
+            SidebarLinkRow(title: "Upcoming", systemImage: "bell.badge", isSelected: selection == .upcoming)
+                .onTapGesture { selection = .upcoming }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                .listRowBackground(Color.clear)
+
+            SidebarLinkRow(title: "Report", systemImage: "chart.bar.xaxis", isSelected: selection == .report)
+                .onTapGesture { selection = .report }
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                .listRowBackground(Color.clear)
+
+            // A quiet header only over the projects group; the views above (All Projects /
+            // Upcoming / Report) stay unlabeled as the sidebar's "home" items. Header shown
+            // only when there ARE projects — the empty state is handled by the overlay.
+            Section(projects.isEmpty ? "" : "Projects") {
                 ForEach(projects) { project in
                     ProjectRowView(project: project, isSelected: selection == .project(project))
                         .onTapGesture { selection = .project(project) }
@@ -50,6 +66,30 @@ struct ProjectListView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("Projects")
+        // A gear pinned to the bottom of the sidebar opens the Settings window (⌘, still
+        // works). macOS keeps Settings as a separate window per convention; this is just a
+        // discoverable entry point, the way Things/Craft place a gear at the sidebar foot.
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Button {
+                    try? openSettings()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                        .labelStyle(.titleAndIcon)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
+                Spacer()
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
+            .background(.bar)
+        }
         .overlay {
             if projects.isEmpty {
                 ContentUnavailableView {
@@ -104,13 +144,17 @@ struct ProjectListView: View {
     }
 }
 
-private struct AllProjectsRow: View {
+/// A fixed top-level sidebar entry (All Projects, Report) — a labeled row with the
+/// same selected/hover styling as the project rows.
+private struct SidebarLinkRow: View {
     @Environment(\.appAccent) private var appAccent
+    let title: String
+    let systemImage: String
     var isSelected: Bool
     @State private var isHovered = false
 
     var body: some View {
-        Label("All Projects", systemImage: "tray.2")
+        Label(title, systemImage: systemImage)
             .fontWeight(.medium)
             .foregroundStyle(isSelected ? .white : .primary)
             .padding(.vertical, 6)

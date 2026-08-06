@@ -186,10 +186,13 @@ struct TaskDetailView: View {
                 .padding(20)
                 .background(cardBackground)
                 } }
+            // Cap the readable width, then center the column in a wide window (the outer
+            // infinity frame must come AFTER the cap and padding, or the block hugs the
+            // leading edge instead of centering).
             .frame(maxWidth: 720)
-            .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(task.plainTitle.isEmpty ? "Untitled" : task.plainTitle)

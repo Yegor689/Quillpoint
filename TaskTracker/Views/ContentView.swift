@@ -3,6 +3,8 @@ import SwiftData
 
 enum SidebarSelection: Hashable {
     case all
+    case upcoming
+    case report
     case project(Project)
 }
 
@@ -27,24 +29,7 @@ struct ContentView: View {
             ProjectListView(selection: $selection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
         } detail: {
-            switch selection {
-            case .all:
-                AllTasksView(selection: $selection)
-            case .project(let project):
-                // Resolve the selection against the LIVE query results by id. A restore
-                // deletes and recreates every project, so `project` here can be a deleted
-                // instance (same id, new object) — rendering it shows an empty list until
-                // the user reselects. Re-resolve to the current instance, or fall back if
-                // it's genuinely gone, so the view recovers immediately after a restore.
-                if let live = projects.first(where: { $0.id == project.id }) {
-                    TaskListView(project: live, selection: $selection)
-                } else {
-                    ContentUnavailableView("Select a Project", systemImage: "folder")
-                        .task { selection = projects.first.map { .project($0) } ?? .all }
-                }
-            case nil:
-                ContentUnavailableView("Select a Project", systemImage: "folder")
-            }
+            detailPane
         }
         .toolbarBackground(.visible, for: .windowToolbar)
         .reminderToast()
@@ -58,20 +43,59 @@ struct ContentView: View {
         }
         .onAppear {
             if selection == nil {
-                if settings.restoreLastProject {
-                    selection = restoredSelection() ?? projects.first.map { .project($0) } ?? .all
-                } else {
-                    selection = .all
-                }
+                selection = initialSelection()
             }
         }
         .onChange(of: selection) { persistSelection() }
+    }
+
+    /// The detail pane for the current sidebar selection.
+    @ViewBuilder
+    private var detailPane: some View {
+        switch selection {
+        case .all:
+            AllTasksView(selection: $selection)
+        case .upcoming:
+            UpcomingView(selection: $selection)
+        case .report:
+            ReportView()
+        case .project(let project):
+            // Resolve the selection against the LIVE query results by id. A restore
+            // deletes and recreates every project, so `project` here can be a deleted
+            // instance (same id, new object) — rendering it shows an empty list until
+            // the user reselects. Re-resolve to the current instance, or fall back if
+            // it's genuinely gone, so the view recovers immediately after a restore.
+            if let live = projects.first(where: { $0.id == project.id }) {
+                TaskListView(project: live, selection: $selection)
+            } else {
+                ContentUnavailableView("Select a Project", systemImage: "folder")
+                    .task { selection = projects.first.map { .project($0) } ?? .all }
+            }
+        case nil:
+            ContentUnavailableView("Select a Project", systemImage: "folder")
+        }
+    }
+
+    /// The view to open on a fresh launch. An explicit landing preference (All Projects /
+    /// Upcoming) wins; otherwise restore the last-used project if that's enabled, else All.
+    private func initialSelection() -> SidebarSelection {
+        switch settings.defaultLandingRaw {
+        case "all":      return .all
+        case "upcoming": return .upcoming
+        default:
+            if settings.restoreLastProject {
+                return restoredSelection() ?? projects.first.map { .project($0) } ?? .all
+            }
+            return .all
+        }
     }
 
     /// Resolves the persisted selection string back into a SidebarSelection,
     /// or nil if it can't be matched (e.g. the project was deleted).
     private func restoredSelection() -> SidebarSelection? {
         if savedSelection == "all" { return .all }
+        if savedSelection == "upcoming" { return .upcoming }
+        if savedSelection == "report" { return .report }
         guard let uuid = UUID(uuidString: savedSelection),
               let project = projects.first(where: { $0.id == uuid }) else { return nil }
         return .project(project)
@@ -80,6 +104,8 @@ struct ContentView: View {
     private func persistSelection() {
         switch selection {
         case .all:                   savedSelection = "all"
+        case .upcoming:              savedSelection = "upcoming"
+        case .report:                savedSelection = "report"
         case .project(let project):  savedSelection = project.id.uuidString
         case nil:                    break
         }
