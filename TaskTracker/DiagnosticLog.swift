@@ -57,8 +57,6 @@ final class DiagnosticLog {
         return header + entries.joined(separator: "\n") + "\n"
     }
 
-    func clear() { entries.removeAll() }
-
     // MARK: - Invariant checking
 
     /// Verifies, after a structural change, that every task is reachable from
