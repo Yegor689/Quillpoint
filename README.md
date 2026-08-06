@@ -32,8 +32,11 @@ gone.
   and nest tasks without a single click. ⌘N for a new item, ⌘, for settings.
 - **Two ways to look at it.** A focused, per-project list when you're heads-down,
   or an All Projects view grouped by project or priority when you're planning.
-- **Reminders that reach you.** Attach a date and time to any task and get a
-  native macOS notification with a "Mark Done" action built in.
+- **See what you got done.** A Report view lays out what you completed, day by
+  day, over any date range you pick.
+- **Reminders that reach you.** Attach a date to any task, pick a preset, and get
+  a native notification with Mark Done and Snooze — plus an optional Upcoming
+  view that lists every reminder by when it's due.
 - **Yours to keep.** Full undo/redo, scheduled backups you can name and pin, and
   JSON export/import. Updates migrate your data safely — and if it ever won't
   open, a recovery screen restores it from a backup or JSON without touching

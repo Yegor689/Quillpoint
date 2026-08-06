@@ -102,13 +102,15 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 
 | View | Purpose |
 |------|---------|
-| `ContentView` | Root `NavigationSplitView`; hosts the sidebar and the selected project / All Projects detail, and the Backups sheet |
+| `ContentView` | Root `NavigationSplitView`; hosts the sidebar and the selected detail (a project, All Projects, Upcoming, or Report), and the Backups sheet. Picks the launch view from settings (last project / All Projects / Upcoming) |
 | `TaskListView` | Tasks for a single selected project; filter (All/Active/Done), search, inline editing, indent/unindent, and drag-to-reorder/nest |
 | `TaskDragController` | `@Observable` engine holding all drag state + logic for reorder/nest/promote |
 | `AllTasksView` | Tasks across all projects; filter, search, group-by (Project or Priority), and a "Completed" section at the bottom |
 | `TaskDetailView` | Full detail for a single task — rich text title/description, subtask list, priority, reminder, completion |
-| `ProjectListView` | Sidebar list of projects plus an "All Projects" entry at the top |
-| `SettingsView` | Settings window (appearance + behavior), opened via ⌘, |
+| `ReportView` | Day-by-day log of tasks completed in a chosen date range (presets + custom), with a created/completed/active-days summary. Opened from a toolbar button. Grouping is a pure `ReportBuilder` (in `ReportData.swift`), unit-tested |
+| `UpcomingView` | Cross-project list of tasks with reminders, grouped by due time (Overdue/Today/Tomorrow/This week/Later). Optional sidebar entry (off by default, toggled in Settings). Bucketing is a pure `UpcomingBuilder` (in `UpcomingData.swift`), unit-tested |
+| `ProjectListView` | Sidebar: "All Projects" and (optionally) "Upcoming" entries, the project list under a "Projects" heading, a Report toolbar button, and a Settings gear at the foot |
+| `SettingsView` | Settings window (appearance, tasks, reminders, on-launch), opened via ⌘, or the sidebar gear |
 | `BackupView` | Backup management sheet — view, create, restore, rename, and pin; opened from the Backups menu command |
 | `RecoveryView` | Shown at the scene root when the store fails to open. Leaves data in place; offers Try Again and a unified **Restore Data** picker (backups, previously set-aside/Quarantine stores, and a JSON export in one sheet), plus Export Diagnostics and a confirmed Start Fresh. The picker hides sources this build can't open (cheap `PersistenceController.looksOpenable` filter, with an "N hidden" note) and fully trial-opens (`canOpen`) the selected one before touching the live store, warning instead of stranding the user. A store written by a newer build shows a distinct "update to open" variant |
 | `WhatsNewView` | Per-version highlights, shown once after an update and via Help → What's New |
@@ -121,8 +123,8 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 | `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration |
 | `ProjectStore` | Project mutations |
 | `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store with SQLite's `VACUUM INTO` — a WAL checkpoint then a single-transaction copy, so the snapshot is consistent and self-contained (no `-wal`/`-shm` sidecars); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
-| `ReminderManager` | Schedules local notifications and handles their actions |
-| `AppSettings` | Persisted user preferences (theme, accent, defaults), surfaced in Settings |
+| `ReminderManager` | Schedules local notifications and handles their actions (Mark Done, Snooze). Re-schedules all future reminders on launch so the app — not the system's pending queue — is the source of truth |
+| `AppSettings` | Persisted user preferences (theme, accent, task defaults, reminder snooze/preset, sidebar and on-launch options), surfaced in Settings |
 
 ## Persistence & migration
 
