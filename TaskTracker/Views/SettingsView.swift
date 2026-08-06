@@ -25,8 +25,32 @@ struct SettingsView: View {
                 Toggle("Confirm before deleting tasks with subtasks", isOn: $settings.confirmBeforeDelete)
             }
 
+            Section("Reminders") {
+                Picker("Snooze reminders for", selection: $settings.snoozeMinutes) {
+                    Text("15 minutes").tag(15)
+                    Text("1 hour").tag(60)
+                    Text("3 hours").tag(180)
+                    Text("Tomorrow").tag(1440)
+                }
+
+                Picker("Default reminder", selection: $settings.defaultReminderPresetRaw) {
+                    Text("1 hour from now").tag("")
+                    Text("This evening").tag("This evening")
+                    Text("Tomorrow 9 AM").tag("Tomorrow 9 AM")
+                    Text("Next week").tag("Next week")
+                }
+            }
+
             Section("On launch") {
-                Toggle("Reopen the last-used project", isOn: $settings.restoreLastProject)
+                Picker("Open", selection: $settings.defaultLandingRaw) {
+                    Text("Last-used project").tag("")
+                    Text("All Projects").tag("all")
+                    Text("Upcoming").tag("upcoming")
+                }
+
+                if settings.defaultLandingRaw.isEmpty {
+                    Toggle("Reopen the last-used project", isOn: $settings.restoreLastProject)
+                }
 
                 Picker("Show filter", selection: $settings.defaultFilterRaw) {
                     Text("Remember last used").tag("")
@@ -48,7 +72,7 @@ struct SettingsView: View {
             .padding(.vertical, 12)
             .background(.bar)
         }
-        .frame(width: 460, height: 470)
+        .frame(width: 460, height: 580)
     }
 }
 

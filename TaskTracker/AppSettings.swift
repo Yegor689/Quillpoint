@@ -80,6 +80,25 @@ final class AppSettings {
         didSet { defaults.set(restoreLastProject, forKey: Keys.restoreProject) }
     }
 
+    // MARK: Reminders
+
+    /// How many minutes "Snooze" pushes a fired reminder forward.
+    var snoozeMinutes: Int {
+        didSet { defaults.set(snoozeMinutes, forKey: Keys.snoozeMinutes) }
+    }
+
+    /// Which quick-preset the reminder popover pre-selects when opened for a task that has
+    /// no reminder yet. Empty = the popover's built-in default (one hour out).
+    var defaultReminderPresetRaw: String {
+        didSet { defaults.set(defaultReminderPresetRaw, forKey: Keys.defaultReminderPreset) }
+    }
+
+    /// The app-level view a fresh launch lands on when NOT restoring the last project:
+    /// "all", "upcoming", or "" (kept for `restoreLastProject` to decide).
+    var defaultLandingRaw: String {
+        didSet { defaults.set(defaultLandingRaw, forKey: Keys.defaultLanding) }
+    }
+
     private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -89,6 +108,9 @@ final class AppSettings {
         static let confirmDelete   = "settings.confirmBeforeDelete"
         static let defaultFilter   = "settings.defaultFilter"
         static let restoreProject  = "settings.restoreLastProject"
+        static let snoozeMinutes         = "settings.snoozeMinutes"
+        static let defaultReminderPreset = "settings.defaultReminderPreset"
+        static let defaultLanding        = "settings.defaultLanding"
     }
 
     init() {
@@ -99,6 +121,9 @@ final class AppSettings {
         confirmBeforeDelete = d.object(forKey: Keys.confirmDelete) as? Bool ?? true
         defaultFilterRaw    = d.string(forKey: Keys.defaultFilter) ?? ""   // "" = remember last
         restoreLastProject  = d.object(forKey: Keys.restoreProject) as? Bool ?? true
+        snoozeMinutes            = d.object(forKey: Keys.snoozeMinutes) as? Int ?? 60
+        defaultReminderPresetRaw = d.string(forKey: Keys.defaultReminderPreset) ?? ""
+        defaultLandingRaw        = d.string(forKey: Keys.defaultLanding) ?? ""
     }
 
     /// The filter a fresh launch should use, or nil to keep the last-used one.
@@ -112,6 +137,9 @@ final class AppSettings {
         confirmBeforeDelete = true
         defaultFilterRaw    = ""
         restoreLastProject  = true
+        snoozeMinutes            = 60
+        defaultReminderPresetRaw = ""
+        defaultLandingRaw        = ""
     }
 }
 
