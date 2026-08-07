@@ -46,7 +46,7 @@ struct TaskDetailView: View {
                         // A task with subtasks has its completion driven by them, so
                         // its own status isn't directly toggleable here.
                         guard !task.isDrivenBySubtasks else { return }
-                        withAnimation(.spring(duration: 0.25)) { task.toggleDone() }
+                        withAnimation(.spring(duration: 0.25)) { taskStore.toggleDone(task) }
                     } label: {
                         chip(
                             icon: task.isDone ? "checkmark.circle.fill" : "circle",
@@ -232,8 +232,9 @@ struct TaskDetailView: View {
             HStack(spacing: 12) {
                 Button {
                     withAnimation(.spring(duration: 0.25)) {
-                        subtask.toggleDone()
-                        task.syncDoneWithSubtasks() // re-derive this parent's completion
+                        // Goes through the store so the subtask's reminder is cancelled,
+                        // the parent's completion is re-derived, and it's undoable + saved.
+                        taskStore.toggleDone(subtask)
                     }
                 } label: {
                     Image(systemName: subtask.isDone ? "checkmark.circle.fill" : "circle")

@@ -333,6 +333,47 @@ final class TaskStore {
         return subtask
     }
 
+    /// Flips a task's completion from a checkbox, keeping the side effects the store owns:
+    /// cancelling the reminder when it's completed (so a finished task can't still fire a
+    /// notification), re-deriving its parent's completion, registering undo, and saving.
+    ///
+    /// The list checkbox and the detail view's chips used to call `task.toggleDone()`
+    /// straight on the model, which skipped all of that — a ticked task kept its reminder
+    /// and fired later, ⌘Z couldn't reverse it, and the change sat unsaved until the app
+    /// lost focus. Completion is derived for a task WITH subtasks, so those are left to
+    /// `syncDoneWithSubtasks` and ignored here.
+    func toggleDone(_ task: Task) {
+        guard !task.isDrivenBySubtasks else { return }
+
+        let wasDone      = task.isDone
+        let wasCompleted = task.completedAt
+        let wasReminder  = task.reminderDate
+        let parent       = task.parent
+        let parentWasDone      = parent?.isDone
+        let parentWasCompleted = parent?.completedAt
+
+        task.setDone(!wasDone)
+        if task.isDone {
+            task.reminderDate = nil
+            reminderManager?.cancel(taskID: task.id)
+        }
+        parent?.syncDoneWithSubtasks()
+
+        undoManager?.registerUndo(withTarget: self) { store in
+            store.undoManager?.setActionName(wasDone ? "Complete Task" : "Reopen Task")
+            task.isDone = wasDone
+            task.completedAt = wasCompleted
+            task.reminderDate = wasReminder
+            if wasReminder != nil { store.reminderManager?.schedule(task: task) }
+            if let parent, let parentWasDone {
+                parent.isDone = parentWasDone
+                parent.completedAt = parentWasCompleted
+            }
+        }
+        undoManager?.setActionName(wasDone ? "Reopen Task" : "Complete Task")
+        save()
+    }
+
     func completeTask(_ task: Task) {
         let wasParentDone      = task.isDone
         let wasParentCompleted = task.completedAt

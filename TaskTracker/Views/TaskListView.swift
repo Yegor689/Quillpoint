@@ -549,8 +549,7 @@ struct TaskRowView: View {
     private func toggleCompletion() {
         guard !task.isDrivenBySubtasks else { return }
         withAnimation(.spring(duration: 0.25)) {
-            task.toggleDone()
-            task.parent?.syncDoneWithSubtasks()
+            taskStore.toggleDone(task)
         }
     }
 

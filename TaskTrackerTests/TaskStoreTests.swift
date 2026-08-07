@@ -224,20 +224,55 @@ struct TaskStoreTests {
         #expect(s.clean.completedAt != nil)
     }
 
+    /// Ticking a checkbox must clear the task's reminder, or a finished task still fires a
+    /// notification later. The list checkbox and detail chips called task.toggleDone()
+    /// directly on the model, skipping the store — so the reminder survived, ⌘Z couldn't
+    /// reverse it, and the change wasn't flushed until the app lost focus.
+    @Test func togglingDoneClearsTheReminderAndFlushes() throws {
+        let f = try Fixture()
+        let s = try seed(f)
+        s.ship.reminderDate = Date().addingTimeInterval(3600)
+        f.store.save()
+
+        f.store.toggleDone(s.ship)
+        #expect(s.ship.isDone)
+        #expect(s.ship.reminderDate == nil, "a completed task must not keep a pending reminder")
+        #expect(f.context.hasChanges == false, "toggleDone must flush")
+
+        // Reopening restores neither completion nor a reminder it never had.
+        f.store.toggleDone(s.ship)
+        #expect(s.ship.isDone == false)
+        #expect(s.ship.completedAt == nil)
+    }
+
+    /// Undo of a checkbox toggle restores completion AND the reminder it cleared.
+    @Test func undoingAToggleRestoresTheReminder() throws {
+        let f = try Fixture()
+        let s = try seed(f)
+        let due = Date().addingTimeInterval(3600)
+        s.ship.reminderDate = due
+        f.store.save()
+
+        f.store.toggleDone(s.ship)
+        #expect(s.ship.reminderDate == nil)
+
+        f.undoManager.undo()
+        #expect(s.ship.isDone == false, "completion reverts")
+        #expect(s.ship.reminderDate == due, "and the reminder comes back")
+    }
+
     /// Undoing that completion must put the parent back too, not leave it marked done
     /// because of a sync the undo didn't account for.
     @Test func undoingLastSubtaskCompletionReopensTheParent() throws {
         let f = try Fixture()
         let s = try seed(f)
-        let undo = UndoManager()
-        f.store.undoManager = undo
         f.store.save()
 
         f.store.completeTask(s.vacuum)
         f.store.completeTask(s.dishes)
         #expect(s.clean.isDone)
 
-        undo.undo()
+        f.undoManager.undo()
         #expect(s.dishes.isDone == false, "the subtask reopens")
         #expect(s.clean.isDone == false, "and so does the parent it completed")
     }
