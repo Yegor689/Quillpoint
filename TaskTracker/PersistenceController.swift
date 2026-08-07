@@ -152,9 +152,17 @@ enum PersistenceController {
         defer { for e in ["", "-wal", "-shm"] { try? fm.removeItem(at: URL(fileURLWithPath: tmp.path + e)) } }
         do {
             try fm.copyItem(at: storeURL, to: tmp)
-            for ext in ["wal", "shm"] {
-                let side = storeURL.appendingPathExtension(ext)
-                if fm.fileExists(atPath: side.path) { try? fm.copyItem(at: side, to: tmp.appendingPathExtension(ext)) }
+            // SQLite sidecars are "<store>-wal"/"-shm". Built with appendingPathExtension
+            // this asked for "<store>.store.wal", which never exists, so the probe copied
+            // the base file WITHOUT its WAL and answered for a store that isn't the one
+            // being restored — a store whose committed-but-uncheckpointed transactions
+            // live in that -wal could be judged on incomplete data. Matches the `defer`
+            // cleanup directly above.
+            for suffix in ["-wal", "-shm"] {
+                let side = URL(fileURLWithPath: storeURL.path + suffix)
+                if fm.fileExists(atPath: side.path) {
+                    try? fm.copyItem(at: side, to: URL(fileURLWithPath: tmp.path + suffix))
+                }
             }
             _ = try ModelContainer(
                 for: QuillpointSchema.current,

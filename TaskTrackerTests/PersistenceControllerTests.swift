@@ -213,6 +213,36 @@ struct PersistenceControllerTests {
         #expect(PersistenceController.canOpen(storeURL: missing) == false)
     }
 
+    /// canOpen probes a COPY, so it has to copy the sidecars too.
+    ///
+    /// Its sidecar paths were built with appendingPathExtension ("<store>.store.wal"),
+    /// which never exists — so the probe copied the base file without its WAL and returned
+    /// a verdict about a store that isn't the one being restored. This is the final guard
+    /// before a restore, so a wrong answer here sends the user into a restore that was
+    /// never really checked.
+    @Test func canOpenCopiesSidecarsAlongsideTheStore() throws {
+        let tmp = TempDir()
+        let store = tmp.store("withsidecars.store")
+        do {
+            let c = try ModelContainer(
+                for: QuillpointSchema.current,
+                configurations: ModelConfiguration(schema: QuillpointSchema.current, url: store))
+            _ = c
+        }
+
+        // A store with sidecars present must still probe as openable — and the probe must
+        // clean up after itself rather than leaving copies in the temp directory.
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: store.path + "-wal") {
+            try Data().write(to: URL(fileURLWithPath: store.path + "-wal"))
+        }
+        #expect(PersistenceController.canOpen(storeURL: store) == true)
+
+        let strays = try fm.contentsOfDirectory(atPath: fm.temporaryDirectory.path)
+            .filter { $0.hasPrefix("probe-") }
+        #expect(strays.isEmpty, "probe temp files cleaned up")
+    }
+
     /// `looksOpenable` (the cheap list pre-filter): accepts a valid current store,
     /// rejects a corrupt file and a store recorded as a newer version — without a full
     /// migration open.
