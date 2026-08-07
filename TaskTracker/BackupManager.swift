@@ -494,8 +494,14 @@ final class BackupManager {
     private func deleteFile(_ backup: Backup) {
         let fm = FileManager.default
         try? fm.removeItem(at: backup.url)
-        try? fm.removeItem(at: backup.url.appendingPathExtension("wal"))
-        try? fm.removeItem(at: backup.url.appendingPathExtension("shm"))
+        // SQLite names its sidecars "<store>-wal"/"<store>-shm", NOT "<store>.wal".
+        // appendingPathExtension produced the latter, so these removals silently
+        // no-opped and any sidecar was left behind — and an orphaned -wal outliving
+        // its .store could later attach to a new backup that reuses the filename.
+        // Same string-append form the snapshot/restore paths already use.
+        for suffix in ["-wal", "-shm"] {
+            try? fm.removeItem(at: URL(fileURLWithPath: backup.url.path + suffix))
+        }
     }
 
     /// Prunes AUTO backups, NEVER deleting a pinned one (pinning keeps an auto backup
