@@ -55,12 +55,13 @@ struct TaskTrackerApp: App {
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
         _bringUp = State(initialValue: state)
-        _services = State(initialValue: Self.buildServices(from: state, backupManager: backupManager))
+        _services = State(initialValue: Self.buildServices(from: state, backupManager: backupManager, settings: settings))
     }
 
     /// Builds the live services from a bring-up result, or nil if it failed.
     private static func buildServices(from state: PersistenceController.State,
-                                      backupManager: BackupManager) -> AppServices? {
+                                      backupManager: BackupManager,
+                                      settings: AppSettings) -> AppServices? {
         guard case .ready(let container) = state else { return nil }
         let taskStore = TaskStore(context: container.mainContext)
         backupManager.liveContainer = container
@@ -74,7 +75,7 @@ struct TaskTrackerApp: App {
             container: container,
             projectStore: ProjectStore(context: container.mainContext),
             taskStore: taskStore,
-            reminderManager: ReminderManager(),
+            reminderManager: ReminderManager(settings: settings),
             dataRegressed: regressed)
     }
 
@@ -232,7 +233,7 @@ struct TaskTrackerApp: App {
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
         bringUp = state
-        services = Self.buildServices(from: state, backupManager: backupManager)
+        services = Self.buildServices(from: state, backupManager: backupManager, settings: settings)
     }
 
     /// "Restore from Backup" (recovery screen): replaces the unreadable store with the

@@ -13,7 +13,11 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
 
     private(set) var authorized = false
 
-    override init() {
+    /// Read at schedule/present time so the notification-sound preference is always current.
+    private let settings: AppSettings
+
+    init(settings: AppSettings) {
+        self.settings = settings
         super.init()
         UNUserNotificationCenter.current().delegate = self
         registerCategory()
@@ -46,7 +50,6 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
         _Concurrency.Task {
             let settings = await UNUserNotificationCenter.current().notificationSettings()
             let status = settings.authorizationStatus
-            log.info("[ReminderManager] startup authorizationStatus=\(status.rawValue) (0=notDetermined,1=denied,2=authorized)")
             let statusStr: String
             switch status {
             case .notDetermined: statusStr = "notDetermined"
@@ -91,7 +94,7 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = task.plainTitle.isEmpty ? "Task Reminder" : task.plainTitle
         content.body  = task.plainDesc.isEmpty  ? "" : task.plainDesc
-        content.sound = .default
+        content.sound = settings.reminderSound ? .default : nil
         content.categoryIdentifier = Self.categoryID
         content.userInfo = [Self.taskIDKey: task.id.uuidString]
 
@@ -159,7 +162,7 @@ final class ReminderManager: NSObject, UNUserNotificationCenterDelegate {
                 userInfo: ["title": notification.request.content.title]
             )
         }
-        completionHandler([.banner, .sound])
+        completionHandler(settings.reminderSound ? [.banner, .sound] : [.banner])
     }
 }
 

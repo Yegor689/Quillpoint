@@ -14,8 +14,10 @@ struct ReportBuilderTests {
     private func startOfDay(_ y: Int, _ m: Int, _ d: Int) -> Date {
         cal.date(from: DateComponents(year: y, month: m, day: d))!
     }
-    private func fact(_ title: String, created: Date, completed: Date? = nil, project: String = "A") -> TaskFacts {
-        TaskFacts(id: UUID(), title: title, createdAt: created, completedAt: completed, projectTitle: project)
+    private func fact(_ title: String, created: Date, completed: Date? = nil,
+                      project: String = "A", isSubtask: Bool = false) -> TaskFacts {
+        TaskFacts(id: UUID(), title: title, createdAt: created, completedAt: completed,
+                  projectTitle: project, isSubtask: isSubtask)
     }
 
     /// Jun 1–10 inclusive: [Jun 1 00:00, Jun 11 00:00).
@@ -70,6 +72,34 @@ struct ReportBuilderTests {
         let log = ReportBuilder.build(facts: [fact("Open", created: day(2026, 6, 3))],
                                       interval: june, calendar: cal)
         #expect(log.isEmpty)
+    }
+
+    @Test func excludesSubtasksWhenIncludeSubtasksIsFalse() {
+        let facts = [
+            fact("Parent",  created: day(2026, 6, 2), completed: day(2026, 6, 2)),
+            fact("Child A", created: day(2026, 6, 2), completed: day(2026, 6, 2), isSubtask: true),
+            fact("Child B", created: day(2026, 6, 2), completed: day(2026, 6, 2), isSubtask: true),
+        ]
+        // Default (include): all three list flat on Jun 2, with the subtask flag preserved.
+        let withSubs = ReportBuilder.build(facts: facts, interval: june, calendar: cal)
+        #expect(withSubs.first?.completed.map(\.title) == ["Child A", "Child B", "Parent"])
+        #expect(withSubs.first?.completed.map(\.isSubtask) == [true, true, false])
+
+        // Off: only the parent survives.
+        let parentsOnly = ReportBuilder.build(facts: facts, interval: june,
+                                              includeSubtasks: false, calendar: cal)
+        #expect(parentsOnly.first?.completed.map(\.title) == ["Parent"])
+    }
+
+    @Test func summaryExcludesSubtasksWhenIncludeSubtasksIsFalse() {
+        let facts = [
+            fact("Parent",  created: day(2026, 6, 2), completed: day(2026, 6, 3)),
+            fact("Child",   created: day(2026, 6, 2), completed: day(2026, 6, 3), isSubtask: true),
+        ]
+        let s = ReportBuilder.summarize(facts: facts, interval: june, includeSubtasks: false)
+        #expect(s.created == 1, "only the parent counts")
+        #expect(s.completed == 1, "only the parent counts")
+        #expect(s.activeDays == 1)
     }
 
     @Test func summaryCountsCreatedCompletedAndActiveDays() {

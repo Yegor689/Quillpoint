@@ -7,6 +7,7 @@ import SwiftData
 struct ReportView: View {
     @Query private var projects: [Project]
     @Environment(\.appAccent) private var appAccent
+    @Environment(AppSettings.self) private var settings
 
     @State private var range: ReportRange = .last30
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
@@ -23,17 +24,22 @@ struct ReportView: View {
         return range.interval(now: Date()) ?? DateInterval(start: customStart, end: customEnd)
     }
 
-    /// Flattened task facts (roots + subtasks) for the log.
+    /// Flattened task facts (roots + subtasks) for the log. `isSubtask` lets the builder drop
+    /// subtasks when the "Include subtasks" setting is off.
     private var facts: [TaskFacts] {
         projects.flatMap { project in
             project.tasks.map { task in
                 TaskFacts(id: task.id, title: task.plainTitle, createdAt: task.createdAt,
-                          completedAt: task.completedAt, projectTitle: project.title)
+                          completedAt: task.completedAt, projectTitle: project.title,
+                          isSubtask: task.parent != nil)
             }
         }
     }
 
-    private var days: [DayLog] { ReportBuilder.build(facts: facts, interval: interval) }
+    private var days: [DayLog] {
+        ReportBuilder.build(facts: facts, interval: interval,
+                            includeSubtasks: settings.showSubtasksInReport)
+    }
 
     var body: some View {
         // Wrapped in a NavigationStack so the detail column has the same structure as the
@@ -60,7 +66,8 @@ struct ReportView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 80)
                 } else {
-                    summaryCard(ReportBuilder.summarize(facts: facts, interval: interval))
+                    summaryCard(ReportBuilder.summarize(facts: facts, interval: interval,
+                                                        includeSubtasks: settings.showSubtasksInReport))
                     ForEach(log) { day in
                         DaySection(day: day, tint: appAccent)
                     }
@@ -182,6 +189,16 @@ private struct DaySection: View {
                     Text(task.title)
                         .font(.body)
                         .lineLimit(1)
+                    if task.isSubtask {
+                        // A quiet marker so a completed subtask reads as a child, not a
+                        // sibling, when the "Include subtasks" setting lists them flat.
+                        Text("Subtask")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                    }
                     Spacer(minLength: 8)
                     Text(task.projectTitle)
                         .font(.caption)

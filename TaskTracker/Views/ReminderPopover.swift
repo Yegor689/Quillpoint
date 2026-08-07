@@ -31,7 +31,9 @@ struct ReminderPopover: View {
             }
         }
 
-        func date(from now: Date, calendar: Calendar = .current) -> Date? {
+        /// `hour` is the user's chosen time-of-day for day-based presets ("Tomorrow",
+        /// "Next week"); "In 1 hour" and "This evening" ignore it.
+        func date(from now: Date, hour: Int = 9, calendar: Calendar = .current) -> Date? {
             switch self {
             case .oneHour:
                 return calendar.date(byAdding: .hour, value: 1, to: now)
@@ -40,10 +42,10 @@ struct ReminderPopover: View {
                 return (six.map { $0 > now } == true) ? six : nil   // only if 6pm is still ahead
             case .tomorrow:
                 let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now
-                return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow)
+                return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: tomorrow)
             case .nextWeek:
                 let wk = calendar.date(byAdding: .day, value: 7, to: now) ?? now
-                return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: wk)
+                return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: wk)
             }
         }
     }
@@ -55,7 +57,9 @@ struct ReminderPopover: View {
 
             // Quick presets — subtle pills; tapping one sets the picker (still editable).
             let now = Date()
-            let available = Preset.allCases.compactMap { p in p.date(from: now).map { (p, $0) } }
+            let available = Preset.allCases.compactMap { p in
+                p.date(from: now, hour: settings.reminderHour).map { (p, $0) }
+            }
             HStack(spacing: 6) {
                 ForEach(available, id: \.0) { preset, date in
                     PresetPill(label: preset.short, selected: isSelected(date)) { pickedDate = date }
@@ -95,7 +99,7 @@ struct ReminderPopover: View {
             if let existing = task.reminderDate {
                 pickedDate = existing
             } else if let preset = Preset(rawValue: settings.defaultReminderPresetRaw),
-                      let date = preset.date(from: Date()) {
+                      let date = preset.date(from: Date(), hour: settings.reminderHour) {
                 pickedDate = date
             } else {
                 pickedDate = Self.defaultDate()
