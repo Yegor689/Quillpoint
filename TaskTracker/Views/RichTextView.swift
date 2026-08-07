@@ -245,8 +245,16 @@ struct RichTitleField: NSViewRepresentable {
             }
         }
 
+        /// Guards against re-entry: the rewrite calls didChangeText() to register undo,
+        /// which posts the change notification that lands back in textDidChange. Without
+        /// this the autoformat would run a second, pointless pass (harmless — the markers
+        /// are already consumed — but it re-saves and re-checks spelling every keystroke).
+        private var isAutoFormatting = false
+
         private func applyMarkdownShortcuts(_ tv: NSTextView) {
-            guard let storage = tv.textStorage else { return }
+            guard !isAutoFormatting, let storage = tv.textStorage else { return }
+            isAutoFormatting = true
+            defer { isAutoFormatting = false }
             // `str.last` rather than indexing by UTF-16 count then Character offset — the
             // two units disagree for anything outside the BMP (emoji), and the guard only
             // needs "is the last character a space/newline".
@@ -268,7 +276,16 @@ struct RichTitleField: NSViewRepresentable {
             let caret = tv.selectedRange().location
             var removedBeforeCaret = 0
 
-            storage.beginEditing()
+            // Route the rewrite through shouldChangeText/didChangeText rather than editing
+            // the storage directly, so it registers with the text view's undo manager. It
+            // used to bypass that entirely: the autoformat was the one text mutation in the
+            // app ⌘Z couldn't reach, so pressing undo skipped past it and reverted the
+            // typing instead — and since the shortcut consumes the ** markers, there was no
+            // way back to literal asterisks at all. Grouped into a single undo action so one
+            // ⌘Z reverts the whole autoformat.
+            tv.undoManager?.beginUndoGrouping()
+            defer { tv.undoManager?.endUndoGrouping() }
+
             for match in matches.reversed() {
                 let full = match.range(at: 0)
                 let inner = match.range(at: 1)
@@ -284,12 +301,15 @@ struct RichTitleField: NSViewRepresentable {
                                                         traits: trait, weight: 5, size: base.pointSize) ?? base
                 replacement.addAttribute(.font, value: newFont,
                                          range: NSRange(location: 0, length: replacement.length))
+                guard tv.shouldChangeText(in: full, replacementString: replacement.string) else { continue }
                 if full.location + full.length <= caret {
                     removedBeforeCaret += full.length - replacement.length
                 }
+                storage.beginEditing()
                 storage.replaceCharacters(in: full, with: replacement)
+                storage.endEditing()
+                tv.didChangeText()
             }
-            storage.endEditing()
 
             let newCaret = max(0, min(storage.length, caret - removedBeforeCaret))
             tv.setSelectedRange(NSRange(location: newCaret, length: 0))
