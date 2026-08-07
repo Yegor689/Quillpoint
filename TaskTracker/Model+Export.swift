@@ -89,8 +89,8 @@ extension Task {
     /// the caller). `keepID` keeps the file's id vs. leaving the fresh one.
     func apply(_ dto: TaskDTO, keepID: Bool) {
         if keepID { id = dto.id }
-        titleRTF = Data(base64Encoded: dto.titleRTF) ?? Task.rtf(from: dto.title)
-        descRTF = Data(base64Encoded: dto.notesRTF) ?? Task.rtf(from: dto.notes)
+        titleRTF = ExportMatch.rtf(base64: dto.titleRTF, plainFallback: dto.title)
+        descRTF = ExportMatch.rtf(base64: dto.notesRTF, plainFallback: dto.notes)
         isDone = dto.isDone
         priority = dto.priority
         createdAt = dto.createdAt
@@ -103,8 +103,8 @@ extension Task {
     /// included). Any difference makes it a distinct task that should be added.
     /// Subtasks are matched separately by the recursive merge.
     func matchesExport(_ dto: TaskDTO) -> Bool {
-        titleRTF == (Data(base64Encoded: dto.titleRTF) ?? Task.rtf(from: dto.title))
-            && descRTF == (Data(base64Encoded: dto.notesRTF) ?? Task.rtf(from: dto.notes))
+        titleRTF == ExportMatch.rtf(base64: dto.titleRTF, plainFallback: dto.title)
+            && descRTF == ExportMatch.rtf(base64: dto.notesRTF, plainFallback: dto.notes)
             && isDone == dto.isDone
             && priority == dto.priority
             && ExportMatch.sameInstant(createdAt, dto.createdAt)
@@ -119,6 +119,19 @@ extension Task {
 /// comparing at millisecond granularity keeps a re-imported item matching its
 /// original (idempotent merge) rather than looking "new" and duplicating.
 enum ExportMatch {
+    /// Decodes an export's base64 RTF, falling back to the plain-text field when the RTF
+    /// is absent OR empty.
+    ///
+    /// `Data(base64Encoded: "")` returns EMPTY DATA, not nil — so `?? Task.rtf(from:)`
+    /// never fired for an entry whose `titleRTF` was an empty string, and the task
+    /// imported blank while its plain `title` sat right there in the file. Hand-written
+    /// and script-generated exports hit this constantly; a real Quillpoint export doesn't,
+    /// which is why it survived. Checking `isEmpty` is the whole fix.
+    static func rtf(base64: String, plainFallback: String) -> Data {
+        if let decoded = Data(base64Encoded: base64), !decoded.isEmpty { return decoded }
+        return Task.rtf(from: plainFallback)
+    }
+
     static func sameInstant(_ a: Date, _ b: Date) -> Bool {
         abs(a.timeIntervalSinceReferenceDate - b.timeIntervalSinceReferenceDate) < 0.001
     }

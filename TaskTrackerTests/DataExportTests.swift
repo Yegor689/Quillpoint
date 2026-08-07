@@ -51,6 +51,32 @@ struct DataExportTests {
         }
     }
 
+    /// An export whose RTF fields are empty strings must fall back to the plain text.
+    ///
+    /// `Data(base64Encoded: "")` returns EMPTY DATA rather than nil, so the
+    /// `?? Task.rtf(from:)` fallback never fired and the task imported completely blank —
+    /// with its title sitting right there in the file's plain `title` field. Quillpoint's
+    /// own exports always populate the RTF, so this only bites hand-written or
+    /// script-generated files, which is exactly what someone migrating data would write.
+    @Test func importFallsBackToPlainTextWhenRTFIsEmpty() throws {
+        let json = """
+        {"app":"Quillpoint","formatVersion":1,"exportedAt":"2026-01-01T00:00:00.000Z",
+         "projects":[{"id":"\(UUID().uuidString)","title":"Imported","desc":"",
+          "createdAt":"2026-01-01T00:00:00.000Z",
+          "tasks":[{"id":"\(UUID().uuidString)","title":"Buy milk","titleRTF":"",
+                    "notes":"two litres","notesRTF":"","isDone":false,"priority":1,
+                    "createdAt":"2026-01-01T00:00:00.000Z","sortIndex":0,
+                    "completedAt":null,"reminderDate":null,"subtasks":[]}]}]}
+        """
+        let dst = try Store()
+        try DataExportManager.importing(Data(json.utf8), into: dst.context, mode: .replace)
+
+        let tasks = try dst.context.fetch(FetchDescriptor<Task>())
+        #expect(tasks.count == 1)
+        #expect(tasks.first?.plainTitle == "Buy milk", "empty titleRTF must fall back to `title`")
+        #expect(tasks.first?.plainDesc == "two litres", "empty notesRTF must fall back to `notes`")
+    }
+
     // MARK: - Round-trip
 
     /// Export from one store, import into a fresh empty store (replace), and confirm

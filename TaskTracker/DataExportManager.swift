@@ -45,10 +45,16 @@ enum DataExportManager {
     enum ImportError: LocalizedError {
         case unreadable
         case malformed(String)
+        /// The pre-import safety backup couldn't be written, so the import was abandoned
+        /// rather than changing data the user has no way back from.
+        case safetyBackupFailed
         var errorDescription: String? {
             switch self {
             case .unreadable:        return "The file could not be read."
             case .malformed(let d):  return "The file isn't a valid Quillpoint export.\n\(d)"
+            case .safetyBackupFailed:
+                return "Couldn't create a backup before importing, so nothing was changed. "
+                     + "Your current data is untouched. Check that there's enough free disk space and try again."
             }
         }
     }

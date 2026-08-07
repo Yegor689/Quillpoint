@@ -429,8 +429,14 @@ struct TaskTrackerApp: App {
         default: return // cancel
         }
 
-        // Safety backup before any change, then apply.
-        backupManager.createBackup(label: "before import", kind: .manual)
+        // Safety backup before any change. createBackup returns nil on failure (no store
+        // file, or the snapshot failed) and is @discardableResult, so ignoring it let a
+        // Replace All wipe every project and task with no way back — while the prompt the
+        // user just accepted promised "A backup is taken either way." Abort instead, the
+        // same way BackupManager.restore refuses to wipe without its pre-restore snapshot.
+        guard backupManager.createBackup(label: "before import", kind: .manual) != nil else {
+            return showImportError(DataExportManager.ImportError.safetyBackupFailed)
+        }
         do {
             try DataExportManager.importing(data, into: container.mainContext, mode: mode)
         } catch {
