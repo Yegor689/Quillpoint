@@ -349,6 +349,17 @@ final class TaskStore {
         reminderManager?.cancel(taskID: task.id)
         for subtask in task.subtasks { reminderManager?.cancel(taskID: subtask.id) }
 
+        // A parent's completion is DERIVED from its subtasks, so completing the last
+        // outstanding one has to complete the parent. The checkbox and detail views
+        // already did this; completeTask (the notification's Mark Done action) didn't, so
+        // finishing a subtask from a reminder left the parent open even though all its
+        // subtasks were done — the same action giving a different result depending on
+        // where it was invoked from.
+        let formerParent = task.parent
+        let parentWasDone = formerParent?.isDone
+        let parentWasCompleted = formerParent?.completedAt
+        formerParent?.syncDoneWithSubtasks()
+
         undoManager?.registerUndo(withTarget: self) { store in
             store.undoManager?.setActionName("Complete Task")
             task.isDone = wasParentDone
@@ -360,6 +371,11 @@ final class TaskStore {
                 subtask.completedAt = wasCompleted
                 subtask.reminderDate = wasSubReminder
                 if wasSubReminder != nil { store.reminderManager?.schedule(task: subtask) }
+            }
+            // Restore the parent's own completion, which the sync above may have flipped.
+            if let formerParent, let parentWasDone {
+                formerParent.isDone = parentWasDone
+                formerParent.completedAt = parentWasCompleted
             }
         }
         undoManager?.setActionName("Complete Task")

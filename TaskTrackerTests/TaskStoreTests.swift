@@ -200,4 +200,45 @@ struct TaskStoreTests {
         f.store.deleteTask(s.clean, in: s.personal)
         #expect(f.context.hasChanges == false, "deleteTask must flush")
     }
+
+    /// Completing the LAST outstanding subtask must complete its parent.
+    ///
+    /// A parent's completion is derived from its subtasks. The checkbox and detail views
+    /// call syncDoneWithSubtasks after toggling, but completeTask — the path behind the
+    /// notification's "Mark Done" action — did not, so finishing a subtask from a reminder
+    /// left the parent open with every subtask done. Same action, different result
+    /// depending on where it was invoked.
+    @Test func completingLastSubtaskCompletesItsParent() throws {
+        let f = try Fixture()
+        let s = try seed(f)
+        f.store.save()
+
+        // "Clean" has two subtasks. Finish one directly, leaving one outstanding.
+        f.store.completeTask(s.vacuum)
+        #expect(s.clean.isDone == false, "parent stays open while a subtask is outstanding")
+
+        // Finishing the last one must carry the parent with it.
+        f.store.completeTask(s.dishes)
+        #expect(s.dishes.isDone)
+        #expect(s.clean.isDone, "parent completes once all its subtasks are done")
+        #expect(s.clean.completedAt != nil)
+    }
+
+    /// Undoing that completion must put the parent back too, not leave it marked done
+    /// because of a sync the undo didn't account for.
+    @Test func undoingLastSubtaskCompletionReopensTheParent() throws {
+        let f = try Fixture()
+        let s = try seed(f)
+        let undo = UndoManager()
+        f.store.undoManager = undo
+        f.store.save()
+
+        f.store.completeTask(s.vacuum)
+        f.store.completeTask(s.dishes)
+        #expect(s.clean.isDone)
+
+        undo.undo()
+        #expect(s.dishes.isDone == false, "the subtask reopens")
+        #expect(s.clean.isDone == false, "and so does the parent it completed")
+    }
 }
