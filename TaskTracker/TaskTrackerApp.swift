@@ -15,8 +15,20 @@ private struct AppServices {
     let dataRegressed: Bool
 }
 
+/// Minimal app delegate for AppKit-level setup SwiftUI doesn't expose. Runs before any
+/// window is created, so the fix lands before the user can see the wrong state.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Quillpoint is a single-window app, so macOS window tabbing (View ▸ Show Tab Bar,
+        // ⇧⌘T) is meaningless here — turning it on just draws an empty ghost tab bar over
+        // the toolbar. Disabling it app-wide also removes the Show/Merge/Move Tab menu items.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+}
+
 @main
 struct TaskTrackerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let storeURL = URL.applicationSupportDirectory
         .appending(component: "TaskTracker.store")
 

@@ -120,8 +120,9 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 
 | Type | Purpose |
 |------|---------|
-| `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration |
-| `ProjectStore` | Project mutations |
+| `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration. Records structural mutations to `DiagnosticLog` |
+| `ProjectStore` | Project mutations. Records create/update/delete (with task count) to `DiagnosticLog` |
+| `DiagnosticLog` | Bounded (500-entry) in-memory ring buffer of structural mutations — op name, 8-char id prefixes, and counts only, never task text — mirrored to the unified log. Backs Export Diagnostics; the export leads with an app/macOS version header. Also hosts `checkProjectMembership`, an invariant tripwire that logs a violation when a task is reachable from zero or multiple projects |
 | `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store with SQLite's `VACUUM INTO` — a WAL checkpoint then a single-transaction copy, so the snapshot is consistent and self-contained (no `-wal`/`-shm` sidecars); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
 | `ReminderManager` | Schedules local notifications and handles their actions (Mark Done, Snooze). Reads `AppSettings` for the notification-sound preference. Re-schedules all future reminders on launch so the app — not the system's pending queue — is the source of truth |
 | `AppSettings` | Persisted user preferences (theme, accent, task defaults, project-delete confirmation, report subtask visibility, reminder snooze/preset/hour/sound, sidebar and on-launch options), surfaced in the tabbed Settings window |
