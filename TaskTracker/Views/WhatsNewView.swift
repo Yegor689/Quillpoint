@@ -45,7 +45,7 @@ enum WhatsNew {
         WhatsNewItem(
             icon: "list.bullet.indent",
             title: "A tidier Report",
-            detail: "Completed subtasks no longer pad the day-by-day log — it lists parent tasks only. Turn on \"Include subtasks\" in Settings to see them, tagged so they're easy to tell apart."),
+            detail: "Completed subtasks no longer pad the day-by-day log — it lists finished tasks only. A task that wrapped up subtasks shows a small arrow you can click to see them."),
         WhatsNewItem(
             icon: "gearshape",
             title: "Settings, reorganised",
