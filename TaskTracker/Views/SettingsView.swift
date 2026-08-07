@@ -102,7 +102,10 @@ private struct ReminderSettings: View {
                     Text("Next week").tag("Next week")
                 }
 
-                Picker("Day reminders at", selection: $settings.reminderHour) {
+                // Scoped label: this hour applies to the day-based presets only. "In 1
+                // hour" is relative and "This evening" is fixed at 6 PM, so a broader
+                // label like "Day reminders at" would claim more than it delivers.
+                Picker("\"Tomorrow\" and \"Next week\" at", selection: $settings.reminderHour) {
                     ForEach(0..<24) { hour in
                         Text(Self.hourLabel(hour)).tag(hour)
                     }

@@ -191,6 +191,13 @@ struct TaskTrackerApp: App {
                 applyDefaultFilter()
                 if WhatsNew.shouldPresent() { showWhatsNew = true }
             }
+            // A notification's sound is baked into its content when it's SCHEDULED, so
+            // flipping this toggle wouldn't affect reminders already queued — they'd keep
+            // their old sound until the next launch rescheduled them. Re-register the
+            // pending ones now so the setting takes effect immediately, as its label says.
+            .onChange(of: settings.reminderSound) {
+                rescheduleFutureReminders()
+            }
             .sheet(isPresented: $showWhatsNew, onDismiss: { WhatsNew.markSeen() }) {
                 WhatsNewView()
             }
@@ -487,6 +494,17 @@ struct TaskTrackerApp: App {
             }
         }
 
+        rescheduleFutureReminders()
+    }
+
+    /// Re-registers every still-future reminder. Used at launch (so a reminder the system
+    /// dropped comes back) and whenever a setting baked into a notification's content
+    /// changes — the sound — since existing notifications keep whatever they were
+    /// scheduled with.
+    private func rescheduleFutureReminders() {
+        guard let container = services?.container,
+              let reminderManager = services?.reminderManager else { return }
+        let now = Date()
         let futureDescriptor = FetchDescriptor<Task>(
             predicate: #Predicate { $0.reminderDate != nil && $0.reminderDate! >= now }
         )
