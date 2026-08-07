@@ -39,21 +39,21 @@ enum WhatsNew {
     /// Highlights for the current release. Re-author this list each version.
     static let highlights: [WhatsNewItem] = [
         WhatsNewItem(
-            icon: "chart.bar.xaxis",
-            title: "See what you got done",
-            detail: "The new Report view lays out the tasks you completed, day by day, over any date range you pick — with a quick summary of how much you created and finished."),
+            icon: "checkmark.shield",
+            title: "More reliable automatic backups",
+            detail: "Automatic backups could skip a whole session spent rewording tasks, because editing text didn't register as a change. Those edits are now backed up like any other work."),
         WhatsNewItem(
-            icon: "bell.badge",
-            title: "Upcoming reminders in one place",
-            detail: "Turn on Upcoming in Settings to gather every task with a reminder — across all your projects — into a single list, grouped by when it's due: Overdue, Today, Tomorrow, This week, Later."),
+            icon: "list.bullet.indent",
+            title: "A tidier Report",
+            detail: "Completed subtasks no longer pad the day-by-day log — it lists parent tasks only. Turn on \"Include subtasks\" in Settings to see them, tagged so they're easy to tell apart."),
         WhatsNewItem(
-            icon: "clock.badge.checkmark",
-            title: "Faster reminders, and Snooze",
-            detail: "Set a reminder with one-tap presets like \"Tomorrow 9 AM,\" and snooze a notification you can't act on right now. Choose your default preset and snooze length in Settings."),
+            icon: "gearshape",
+            title: "Settings, reorganised",
+            detail: "Settings is now split into General, Tasks, Reminders, and Appearance tabs, so nothing scrolls off. New options: the time of day reminder presets use, whether reminders play a sound, and a confirmation before deleting a project."),
         WhatsNewItem(
-            icon: "bolt.fill",
-            title: "Snappier with lots of tasks",
-            detail: "Big task lists are much faster to scroll and search — the app no longer slows to a crawl when a project has hundreds or thousands of tasks."),
+            icon: "wrench.and.screwdriver",
+            title: "Fixes",
+            detail: "Quillpoint no longer reopens on the Report screen after a restart, the New Project button stays put instead of drifting to the far edge of the window, and a failed export now tells you instead of quietly doing nothing."),
     ]
 }
 
