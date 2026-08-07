@@ -107,10 +107,10 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 | `TaskDragController` | `@Observable` engine holding all drag state + logic for reorder/nest/promote |
 | `AllTasksView` | Tasks across all projects; filter, search, group-by (Project or Priority), and a "Completed" section at the bottom |
 | `TaskDetailView` | Full detail for a single task — rich text title/description, subtask list, priority, reminder, completion |
-| `ReportView` | Day-by-day log of tasks completed in a chosen date range (presets + custom), with a created/completed/active-days summary. Opened from a toolbar button. Grouping is a pure `ReportBuilder` (in `ReportData.swift`), unit-tested |
+| `ReportView` | Day-by-day log of tasks completed in a chosen date range (presets + custom), with a created/completed/active-days summary. Opened from a toolbar button. Grouping is a pure `ReportBuilder` (in `ReportData.swift`), unit-tested. Completed subtasks are hidden by default (parent/standalone tasks only); the "Include subtasks" setting shows them flat |
 | `UpcomingView` | Cross-project list of tasks with reminders, grouped by due time (Overdue/Today/Tomorrow/This week/Later). Optional sidebar entry (off by default, toggled in Settings). Bucketing is a pure `UpcomingBuilder` (in `UpcomingData.swift`), unit-tested |
 | `ProjectListView` | Sidebar: "All Projects" and (optionally) "Upcoming" entries, the project list under a "Projects" heading, a Report toolbar button, and a Settings gear at the foot |
-| `SettingsView` | Settings window (appearance, tasks, reminders, on-launch), opened via ⌘, or the sidebar gear |
+| `SettingsView` | Tabbed Settings window (General, Tasks, Reminders, Appearance), opened via ⌘, or the sidebar gear |
 | `BackupView` | Backup management sheet — view, create, restore, rename, and pin; opened from the Backups menu command |
 | `RecoveryView` | Shown at the scene root when the store fails to open. Leaves data in place; offers Try Again and a unified **Restore Data** picker (backups, previously set-aside/Quarantine stores, and a JSON export in one sheet), plus Export Diagnostics and a confirmed Start Fresh. The picker hides sources this build can't open (cheap `PersistenceController.looksOpenable` filter, with an "N hidden" note) and fully trial-opens (`canOpen`) the selected one before touching the live store, warning instead of stranding the user. A store written by a newer build shows a distinct "update to open" variant |
 | `WhatsNewView` | Per-version highlights, shown once after an update and via Help → What's New |
@@ -120,11 +120,13 @@ Tasks are ordered by `sortIndex` within their context (root tasks within a proje
 
 | Type | Purpose |
 |------|---------|
-| `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration |
-| `ProjectStore` | Project mutations |
+| `TaskStore` | All task mutations (add/delete/complete/indent/reorder) with undo registration. Records structural mutations to `DiagnosticLog` |
+| `ProjectStore` | Project mutations. Records create/update/delete (with task count) to `DiagnosticLog` |
+| `DiagnosticLog` | Bounded (500-entry) in-memory ring buffer of structural mutations — op name, 8-char id prefixes, and counts only, never task text — mirrored to the unified log. Backs Export Diagnostics; the export leads with an app/macOS version header. Also hosts `checkProjectMembership`, an invariant tripwire that logs a violation when a task is reachable from zero or multiple projects |
 | `BackupManager` | Auto / manual / pre-restore backups. Snapshots the live store with SQLite's `VACUUM INTO` — a WAL checkpoint then a single-transaction copy, so the snapshot is consistent and self-contained (no `-wal`/`-shm` sidecars); `restore(backup:)` rewrites the live store from a snapshot in place, keeping a single rolling pre-restore safety backup. `restoreStoreFile(at:)` is the recovery-path variant used when no live container exists — it swaps any `.store` file (a backup or a set-aside store) in as the live store after setting the current one aside |
-| `ReminderManager` | Schedules local notifications and handles their actions (Mark Done, Snooze). Re-schedules all future reminders on launch so the app — not the system's pending queue — is the source of truth |
-| `AppSettings` | Persisted user preferences (theme, accent, task defaults, reminder snooze/preset, sidebar and on-launch options), surfaced in Settings |
+| `StoreFingerprint` | A store's content mark — task count, latest created/completed time, and a content size (RTF byte lengths + mutable scalars) — read straight from SQLite or computed from live models. Backs the auto-backup "skip if unchanged" check and duplicate pruning. The `read` SQL and `fromTasks` must stay term-for-term identical; `liveAndFileFingerprintsAgree` enforces it. Includes content size because count+dates alone are blind to text edits, which silently suppressed auto-backups for the length of an editing session |
+| `ReminderManager` | Schedules local notifications and handles their actions (Mark Done, Snooze). Reads `AppSettings` for the notification-sound preference. Re-schedules all future reminders on launch so the app — not the system's pending queue — is the source of truth |
+| `AppSettings` | Persisted user preferences (theme, accent, task defaults, project-delete confirmation, report subtask visibility, reminder snooze/preset/hour/sound, sidebar and on-launch options), surfaced in the tabbed Settings window |
 
 ## Persistence & migration
 

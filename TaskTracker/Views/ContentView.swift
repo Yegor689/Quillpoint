@@ -81,36 +81,39 @@ struct ContentView: View {
         }
     }
 
-    /// The view to open on a fresh launch. An explicit landing preference (All Projects /
-    /// Upcoming) wins; otherwise restore the last-used project if that's enabled, else All.
+    /// The view to open on a fresh launch, driven entirely by the "Open" preference:
+    /// All Projects / Upcoming pin to that view; the default ("") restores the last-used
+    /// project (falling back to the first project, then All Projects).
     private func initialSelection() -> SidebarSelection {
         switch settings.defaultLandingRaw {
         case "all":      return .all
         case "upcoming": return settings.showUpcoming ? .upcoming : .all
-        default:
-            if settings.restoreLastProject {
-                return restoredSelection() ?? projects.first.map { .project($0) } ?? .all
-            }
-            return .all
+        default:         return restoredSelection() ?? projects.first.map { .project($0) } ?? .all
         }
     }
 
-    /// Resolves the persisted selection string back into a SidebarSelection,
-    /// or nil if it can't be matched (e.g. the project was deleted).
+    /// Resolves the persisted selection string back into a SidebarSelection to restore on
+    /// launch, or nil if it can't be matched (e.g. the project was deleted). Report is
+    /// deliberately NOT restored — it's a transient toolbar destination you enter on
+    /// purpose, not a place to land on launch; a saved "report" falls through to nil so the
+    /// caller opens a project / All Projects instead. Upcoming only restores while its
+    /// sidebar row is enabled, so the launch view always has a matching sidebar entry.
     private func restoredSelection() -> SidebarSelection? {
         if savedSelection == "all" { return .all }
-        if savedSelection == "upcoming" { return .upcoming }
-        if savedSelection == "report" { return .report }
+        if savedSelection == "upcoming" { return settings.showUpcoming ? .upcoming : .all }
         guard let uuid = UUID(uuidString: savedSelection),
               let project = projects.first(where: { $0.id == uuid }) else { return nil }
         return .project(project)
     }
 
+    /// Persists the current selection so the next launch can restore it. Report is skipped
+    /// entirely (it's a transient toolbar view, never a launch destination), so visiting it
+    /// doesn't overwrite the last project/All-Projects/Upcoming the user was actually on.
     private func persistSelection() {
         switch selection {
         case .all:                   savedSelection = "all"
         case .upcoming:              savedSelection = "upcoming"
-        case .report:                savedSelection = "report"
+        case .report:                break
         case .project(let project):  savedSelection = project.id.uuidString
         case nil:                    break
         }

@@ -71,13 +71,13 @@ final class AppSettings {
     var confirmBeforeDelete: Bool {
         didSet { defaults.set(confirmBeforeDelete, forKey: Keys.confirmDelete) }
     }
+    /// Whether to confirm before deleting a project (which cascade-deletes all its tasks).
+    var confirmBeforeDeleteProject: Bool {
+        didSet { defaults.set(confirmBeforeDeleteProject, forKey: Keys.confirmDeleteProject) }
+    }
     /// Filter the app opens to. Empty = remember the last-used filter.
     var defaultFilterRaw: String {
         didSet { defaults.set(defaultFilterRaw, forKey: Keys.defaultFilter) }
-    }
-    /// On launch, open the last-used project (true) or always All Projects (false).
-    var restoreLastProject: Bool {
-        didSet { defaults.set(restoreLastProject, forKey: Keys.restoreProject) }
     }
 
     // MARK: Reminders
@@ -87,14 +87,25 @@ final class AppSettings {
         didSet { defaults.set(snoozeMinutes, forKey: Keys.snoozeMinutes) }
     }
 
+    /// The hour of day (0–23) that day-based reminder presets ("Tomorrow", "Next week")
+    /// land on. Defaults to 9 (9 AM).
+    var reminderHour: Int {
+        didSet { defaults.set(reminderHour, forKey: Keys.reminderHour) }
+    }
+
+    /// Whether reminder notifications play a sound.
+    var reminderSound: Bool {
+        didSet { defaults.set(reminderSound, forKey: Keys.reminderSound) }
+    }
+
     /// Which quick-preset the reminder popover pre-selects when opened for a task that has
     /// no reminder yet. Empty = the popover's built-in default (one hour out).
     var defaultReminderPresetRaw: String {
         didSet { defaults.set(defaultReminderPresetRaw, forKey: Keys.defaultReminderPreset) }
     }
 
-    /// The app-level view a fresh launch lands on when NOT restoring the last project:
-    /// "all", "upcoming", or "" (kept for `restoreLastProject` to decide).
+    /// Which view a fresh launch lands on: "all" (All Projects), "upcoming" (Upcoming),
+    /// or "" (restore the last-used project).
     var defaultLandingRaw: String {
         didSet { defaults.set(defaultLandingRaw, forKey: Keys.defaultLanding) }
     }
@@ -105,6 +116,12 @@ final class AppSettings {
         didSet { defaults.set(showUpcoming, forKey: Keys.showUpcoming) }
     }
 
+    /// Whether the Report lists completed subtasks alongside their parents. Off by default,
+    /// so the log shows only parent/standalone tasks and doesn't look padded by subtasks.
+    var showSubtasksInReport: Bool {
+        didSet { defaults.set(showSubtasksInReport, forKey: Keys.showSubtasksInReport) }
+    }
+
     private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -112,12 +129,15 @@ final class AppSettings {
         static let accent          = "settings.accent"
         static let defaultPriority = "settings.defaultPriority"
         static let confirmDelete   = "settings.confirmBeforeDelete"
+        static let confirmDeleteProject = "settings.confirmBeforeDeleteProject"
         static let defaultFilter   = "settings.defaultFilter"
-        static let restoreProject  = "settings.restoreLastProject"
         static let snoozeMinutes         = "settings.snoozeMinutes"
+        static let reminderHour          = "settings.reminderHour"
+        static let reminderSound         = "settings.reminderSound"
         static let defaultReminderPreset = "settings.defaultReminderPreset"
         static let defaultLanding        = "settings.defaultLanding"
         static let showUpcoming          = "settings.showUpcoming"
+        static let showSubtasksInReport  = "settings.showSubtasksInReport"
     }
 
     init() {
@@ -126,12 +146,15 @@ final class AppSettings {
         accent = Accent(rawValue: d.string(forKey: Keys.accent) ?? "") ?? .blue
         defaultPriority     = d.object(forKey: Keys.defaultPriority) as? Int ?? Priority.normal.rawValue
         confirmBeforeDelete = d.object(forKey: Keys.confirmDelete) as? Bool ?? true
+        confirmBeforeDeleteProject = d.object(forKey: Keys.confirmDeleteProject) as? Bool ?? true
         defaultFilterRaw    = d.string(forKey: Keys.defaultFilter) ?? ""   // "" = remember last
-        restoreLastProject  = d.object(forKey: Keys.restoreProject) as? Bool ?? true
         snoozeMinutes            = d.object(forKey: Keys.snoozeMinutes) as? Int ?? 60
+        reminderHour             = d.object(forKey: Keys.reminderHour) as? Int ?? 9
+        reminderSound            = d.object(forKey: Keys.reminderSound) as? Bool ?? true
         defaultReminderPresetRaw = d.string(forKey: Keys.defaultReminderPreset) ?? ""
         defaultLandingRaw        = d.string(forKey: Keys.defaultLanding) ?? ""
         showUpcoming             = d.object(forKey: Keys.showUpcoming) as? Bool ?? false
+        showSubtasksInReport     = d.object(forKey: Keys.showSubtasksInReport) as? Bool ?? false
     }
 
     /// The filter a fresh launch should use, or nil to keep the last-used one.
@@ -143,12 +166,15 @@ final class AppSettings {
         accent              = .blue
         defaultPriority     = Priority.normal.rawValue
         confirmBeforeDelete = true
+        confirmBeforeDeleteProject = true
         defaultFilterRaw    = ""
-        restoreLastProject  = true
         snoozeMinutes            = 60
+        reminderHour             = 9
+        reminderSound            = true
         defaultReminderPresetRaw = ""
         defaultLandingRaw        = ""
         showUpcoming             = false
+        showSubtasksInReport     = false
     }
 }
 

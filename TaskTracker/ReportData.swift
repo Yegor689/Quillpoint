@@ -42,6 +42,7 @@ struct TaskFacts {
     let createdAt: Date
     let completedAt: Date?
     let projectTitle: String
+    let isSubtask: Bool
 }
 
 /// One task line in a day's created/completed list.
@@ -49,6 +50,7 @@ struct ReportTask: Identifiable {
     let id: UUID
     let title: String
     let projectTitle: String
+    let isSubtask: Bool
 }
 
 /// A single day's completed tasks. Only days with a completion appear in the log.
@@ -69,7 +71,11 @@ struct RangeSummary {
 enum ReportBuilder {
     /// Headline numbers for the range: how many tasks were created and completed, and how
     /// many days had a completion. `facts`/`interval` are the same inputs as `build`.
-    static func summarize(facts: [TaskFacts], interval: DateInterval) -> RangeSummary {
+    /// When `includeSubtasks` is false, subtasks are excluded from every count so the
+    /// summary matches the parent-only log.
+    static func summarize(facts: [TaskFacts], interval: DateInterval,
+                          includeSubtasks: Bool = true) -> RangeSummary {
+        let facts = includeSubtasks ? facts : facts.filter { !$0.isSubtask }
         func inRange(_ d: Date?) -> Bool { d.map { interval.contains($0) } ?? false }
         let created = facts.filter { inRange($0.createdAt) }.count
         let completedFacts = facts.filter { inRange($0.completedAt) }
@@ -79,12 +85,17 @@ enum ReportBuilder {
 
     /// Builds the day-by-day log of COMPLETED tasks over `facts` within `interval`, newest
     /// day first. A task appears under the day its `completedAt` falls on. Days with no
-    /// completion are omitted.
+    /// completion are omitted. When `includeSubtasks` is false, subtasks are dropped so only
+    /// parent (and standalone) tasks show — otherwise a completed parent and its subtasks
+    /// list flat at the same level.
     static func build(facts: [TaskFacts], interval: DateInterval,
+                      includeSubtasks: Bool = true,
                       calendar: Calendar = .current) -> [DayLog] {
+        let facts = includeSubtasks ? facts : facts.filter { !$0.isSubtask }
         func inRange(_ d: Date?) -> Bool { d.map { interval.contains($0) } ?? false }
         func line(_ f: TaskFacts) -> ReportTask {
-            ReportTask(id: f.id, title: f.title.isEmpty ? "Untitled" : f.title, projectTitle: f.projectTitle)
+            ReportTask(id: f.id, title: f.title.isEmpty ? "Untitled" : f.title,
+                       projectTitle: f.projectTitle, isSubtask: f.isSubtask)
         }
 
         var completedByDay: [Date: [ReportTask]] = [:]

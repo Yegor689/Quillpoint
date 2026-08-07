@@ -15,8 +15,20 @@ private struct AppServices {
     let dataRegressed: Bool
 }
 
+/// Minimal app delegate for AppKit-level setup SwiftUI doesn't expose. Runs before any
+/// window is created, so the fix lands before the user can see the wrong state.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Quillpoint is a single-window app, so macOS window tabbing (View ▸ Show Tab Bar,
+        // ⇧⌘T) is meaningless here — turning it on just draws an empty ghost tab bar over
+        // the toolbar. Disabling it app-wide also removes the Show/Merge/Move Tab menu items.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+}
+
 @main
 struct TaskTrackerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let storeURL = URL.applicationSupportDirectory
         .appending(component: "TaskTracker.store")
 
@@ -55,12 +67,13 @@ struct TaskTrackerApp: App {
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
         _bringUp = State(initialValue: state)
-        _services = State(initialValue: Self.buildServices(from: state, backupManager: backupManager))
+        _services = State(initialValue: Self.buildServices(from: state, backupManager: backupManager, settings: settings))
     }
 
     /// Builds the live services from a bring-up result, or nil if it failed.
     private static func buildServices(from state: PersistenceController.State,
-                                      backupManager: BackupManager) -> AppServices? {
+                                      backupManager: BackupManager,
+                                      settings: AppSettings) -> AppServices? {
         guard case .ready(let container) = state else { return nil }
         let taskStore = TaskStore(context: container.mainContext)
         backupManager.liveContainer = container
@@ -74,7 +87,7 @@ struct TaskTrackerApp: App {
             container: container,
             projectStore: ProjectStore(context: container.mainContext),
             taskStore: taskStore,
-            reminderManager: ReminderManager(),
+            reminderManager: ReminderManager(settings: settings),
             dataRegressed: regressed)
     }
 
@@ -232,7 +245,7 @@ struct TaskTrackerApp: App {
             migrationPlan: QuillpointMigrationPlan.self,
             backupManager: backupManager)
         bringUp = state
-        services = Self.buildServices(from: state, backupManager: backupManager)
+        services = Self.buildServices(from: state, backupManager: backupManager, settings: settings)
     }
 
     /// "Restore from Backup" (recovery screen): replaces the unreadable store with the
@@ -341,21 +354,44 @@ struct TaskTrackerApp: App {
         panel.nameFieldStringValue = "Quillpoint-diagnostics.txt"
         panel.title = "Export Diagnostics"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            showExportError(error)
+        }
+    }
+
+    private func showExportError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Export Failed"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     /// Exports all projects and tasks to a user-chosen JSON file — a portable,
     /// human-readable copy of everything in the app. Read-only; never mutates data.
     private func exportData() {
         guard let container = services?.container else { return }
-        guard let data = try? DataExportManager.json(from: container.mainContext) else { return }
+        // Serialization and the write are both reported: a silent failure here looks
+        // exactly like a successful backup, which is the worst way for this to fail.
+        let data: Data
+        do {
+            data = try DataExportManager.json(from: container.mainContext)
+        } catch {
+            return showExportError(error)
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10) // yyyy-MM-dd
         panel.nameFieldStringValue = "Quillpoint-data-\(stamp).json"
         panel.title = "Export All Data"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            showExportError(error)
+        }
     }
 
     /// Imports a JSON export. Validates first (a bad file changes nothing), asks the

@@ -16,14 +16,22 @@ struct StoreFingerprint: Equatable {
     /// Latest of any task's created/completed time, as seconds since the reference date;
     /// 0 when the store has no tasks. This is the store's content "high-water mark".
     let latestActivity: TimeInterval
+    /// Total byte length of every task's title+notes RTF, plus the sum of the mutable
+    /// scalar columns. Count and latestActivity alone are blind to edits that neither add
+    /// a task nor complete one — retitling or rewriting notes, reprioritising, reordering.
+    /// A whole session spent editing text used to look "unchanged", so the auto-backup
+    /// skipped for as long as the editing continued and none of that work was captured.
+    let contentSize: Int
 
-    /// Two stores are treated as holding equivalent data when both the count and the
-    /// high-water mark match. This is a practical "did anything change?" signal, not a
-    /// cryptographic identity: a false match (same count and same newest date but a
-    /// different edit in between) can at worst cause the auto-backup skip to miss ONE
-    /// snapshot — bounded and harmless. Kept deliberately simple.
+    /// Two stores are treated as holding equivalent data when the count, the high-water
+    /// mark, and the content size all match. This is a practical "did anything change?"
+    /// signal, not a cryptographic identity: a false match (an edit that preserves every
+    /// one of those, e.g. swapping two characters in a title) can at worst cause the
+    /// auto-backup skip to miss ONE snapshot. Kept deliberately cheap.
     static func == (lhs: StoreFingerprint, rhs: StoreFingerprint) -> Bool {
-        lhs.taskCount == rhs.taskCount && lhs.latestActivity == rhs.latestActivity
+        lhs.taskCount == rhs.taskCount
+            && lhs.latestActivity == rhs.latestActivity
+            && lhs.contentSize == rhs.contentSize
     }
 
     /// The content date, if the store has any tasks — for display ("newest task …").
@@ -38,7 +46,13 @@ struct StoreFingerprint: Equatable {
             max(acc, max(t.createdAt.timeIntervalSinceReferenceDate,
                          t.completedAt?.timeIntervalSinceReferenceDate ?? 0))
         }
-        return StoreFingerprint(taskCount: tasks.count, latestActivity: latest)
+        // Must match `read`'s SQL term-for-term: RTF byte lengths plus the mutable
+        // scalars. `liveAndFileFingerprintsAgree` enforces that the two stay in step.
+        let size = tasks.reduce(0) { acc, t in
+            acc + t.titleRTF.count + t.descRTF.count
+                + (t.isDone ? 1 : 0) + t.priority + t.sortIndex
+        }
+        return StoreFingerprint(taskCount: tasks.count, latestActivity: latest, contentSize: size)
     }
 
     /// Reads the fingerprint from a `.store` file on disk. Returns nil if the file can't
@@ -53,14 +67,20 @@ struct StoreFingerprint: Equatable {
         }
         defer { sqlite3_close(db) }
 
-        // ZTASK is Core Data's table for the Task entity; ZCREATEDAT / ZCOMPLETEDAT are
-        // its date columns (Core Data reference-date epoch — same units as latestActivity).
-        // The checksum sums a per-row hash over the mutable columns so an edit that leaves
-        // count and dates unchanged still changes the fingerprint. total_changes()-style
-        // precision isn't needed; SUM over hashes is order-independent and cheap.
-        // ZTASK is Core Data's table for the Task entity; ZCREATEDAT / ZCOMPLETEDAT are
-        // its date columns (Core Data reference-date epoch — same units as latestActivity).
-        let sql = "SELECT COUNT(*), COALESCE(MAX(MAX(COALESCE(ZCREATEDAT,0), COALESCE(ZCOMPLETEDAT,0))),0) FROM ZTASK;"
+        // ZTASK is Core Data's table for the Task entity; ZCREATEDAT / ZCOMPLETEDAT are its
+        // date columns (Core Data reference-date epoch — same units as latestActivity).
+        // The third term is contentSize: RTF byte lengths plus the mutable scalars, so a
+        // text edit (which changes neither count nor dates) still moves the fingerprint.
+        // It must match `fromTasks` term-for-term — `liveAndFileFingerprintsAgree` checks it.
+        let sql = """
+        SELECT COUNT(*),
+               COALESCE(MAX(MAX(COALESCE(ZCREATEDAT,0), COALESCE(ZCOMPLETEDAT,0))),0),
+               COALESCE(SUM(COALESCE(LENGTH(CAST(ZTITLERTF AS BLOB)),0)
+                          + COALESCE(LENGTH(CAST(ZDESCRTF AS BLOB)),0)
+                          + COALESCE(ZISDONE,0) + COALESCE(ZPRIORITY,0)
+                          + COALESCE(ZSORTINDEX,0)),0)
+        FROM ZTASK;
+        """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
@@ -68,6 +88,7 @@ struct StoreFingerprint: Equatable {
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         let count = Int(sqlite3_column_int64(stmt, 0))
         let latest = sqlite3_column_double(stmt, 1)
-        return StoreFingerprint(taskCount: count, latestActivity: latest)
+        let size = Int(sqlite3_column_int64(stmt, 2))
+        return StoreFingerprint(taskCount: count, latestActivity: latest, contentSize: size)
     }
 }

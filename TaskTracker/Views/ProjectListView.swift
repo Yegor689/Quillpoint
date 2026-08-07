@@ -37,11 +37,12 @@ struct ProjectListView: View {
                     .listRowBackground(Color.clear)
             }
 
-            // A quiet header only over the projects group; the views above (All Projects /
-            // Upcoming) stay unlabeled as the sidebar's "home" items. Report lives in the
-            // toolbar instead, to keep the sidebar list uncluttered. Header shown only when
-            // there ARE projects — the empty state is handled by the overlay.
-            Section(projects.isEmpty ? "" : "Projects") {
+            // A quiet header over the projects group with an inline "+" to add a project,
+            // right where the list is — closer to the projects it creates than a title-bar
+            // button. The views above (All Projects / Upcoming) stay unlabeled as the
+            // sidebar's "home" items. Header shown only when there ARE projects — the empty
+            // state (with its own New Project button) is handled by the overlay.
+            Section {
                 ForEach(projects) { project in
                     ProjectRowView(project: project, isSelected: selection == .project(project))
                         .onTapGesture { selection = .project(project) }
@@ -56,9 +57,31 @@ struct ProjectListView: View {
                             }
                             Divider()
                             Button("Delete", role: .destructive) {
-                                projectToDelete = project
+                                if settings.confirmBeforeDeleteProject {
+                                    projectToDelete = project
+                                } else {
+                                    deleteProject(project)
+                                }
                             }
                         }
+                }
+            } header: {
+                if !projects.isEmpty {
+                    HStack(spacing: 6) {
+                        Text("Projects")
+                        Button {
+                            isAddingProject = true
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .imageScale(.medium)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New Project (⌘N)")
+                        .keyboardShortcut("n", modifiers: .command)
+                        Spacer()
+                    }
                 }
             }
         }
@@ -101,22 +124,18 @@ struct ProjectListView: View {
             }
         }
         .toolbar {
-            // Report opens from the toolbar rather than a sidebar row, keeping the sidebar
-            // list to just All Projects / Upcoming / your projects. The button highlights
-            // when Report is the active view.
+            // Only Report lives in the sidebar's title bar now — a single button that can't
+            // crowd. "New Project" moved to the sidebar foot (next to Settings): with a
+            // NavigationSplitView, sidebar-trailing toolbar items merge onto the window's
+            // title bar and compete with the detail pane's own toolbar, which overflowed
+            // "Add Project" into a »-menu that escaped to the far-right edge. Report
+            // highlights when it's the active view.
             ToolbarItem {
                 Button { selection = .report } label: {
                     Label("Report", systemImage: "chart.bar.xaxis")
                 }
                 .help("Report")
                 .foregroundStyle(selection == .report ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-            }
-            ToolbarItem {
-                Button { isAddingProject = true } label: {
-                    Label("Add Project", systemImage: "plus")
-                }
-                .help("New Project (⌘N)")
-                .keyboardShortcut("n", modifiers: .command)
             }
         }
         .confirmationDialog(
@@ -128,9 +147,7 @@ struct ProjectListView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Project", role: .destructive) {
-                guard let project = projectToDelete else { return }
-                if selection == .project(project) { selection = .all }
-                projectStore.deleteProject(project)
+                if let project = projectToDelete { deleteProject(project) }
                 projectToDelete = nil
             }
             Button("Cancel", role: .cancel) { projectToDelete = nil }
@@ -149,6 +166,13 @@ struct ProjectListView: View {
                 projectStore.updateProject(project, title: renameTitle, desc: renameDesc)
             }
         }
+    }
+
+    /// Deletes a project, moving the selection off it first if it was selected. The single
+    /// delete path, called directly when confirmation is off and from the confirm dialog.
+    private func deleteProject(_ project: Project) {
+        if selection == .project(project) { selection = .all }
+        projectStore.deleteProject(project)
     }
 }
 

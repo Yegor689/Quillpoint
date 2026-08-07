@@ -99,10 +99,14 @@ struct StoreFingerprintTests {
     }
 
     @Test func sameContentComparesEqual() throws {
-        let a = StoreFingerprint(taskCount: 50, latestActivity: 800_000_000)
-        let b = StoreFingerprint(taskCount: 50, latestActivity: 800_000_000)
-        let c = StoreFingerprint(taskCount: 50, latestActivity: 800_000_001)
+        let a = StoreFingerprint(taskCount: 50, latestActivity: 800_000_000, contentSize: 1234)
+        let b = StoreFingerprint(taskCount: 50, latestActivity: 800_000_000, contentSize: 1234)
+        let c = StoreFingerprint(taskCount: 50, latestActivity: 800_000_001, contentSize: 1234)
+        // Same count and dates, different text: must NOT compare equal, or an
+        // edit-only session is invisible to the auto-backup content check.
+        let d = StoreFingerprint(taskCount: 50, latestActivity: 800_000_000, contentSize: 9999)
         #expect(a == b)
         #expect(a != c)
+        #expect(a != d)
     }
 }

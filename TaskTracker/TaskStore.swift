@@ -99,6 +99,7 @@ final class TaskStore {
         let task = Task(plainTitle: plainTitle, priority: priority, project: project)
         context.insert(task)
         project.tasks.append(task)
+        diagnostics.record("addTask", "task=\(Self.short(task.id)) project=\(Self.short(project.id))")
 
         // Position the new task: before `beforeTask`, else right after `afterTask`,
         // else at the end.
@@ -125,6 +126,8 @@ final class TaskStore {
     func indentTask(_ task: Task, previousTask: Task?) {
         guard let parent = previousTask else { return }
         let project = task.project
+        diagnostics.record("indentTask",
+            "task=\(Self.short(task.id)) parent=\(Self.short(parent.id)) project=\(Self.short(project.id))")
         // Re-render the title at the subtask (body) font size so it doesn't stay
         // at the larger top-level (title3) size it was created with.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .body).pointSize)
@@ -302,6 +305,8 @@ final class TaskStore {
         // Don't append manually too — same double-write hazard as indentTask.
         let subtask = Task(plainTitle: plainTitle, priority: priority, project: parent.project, parent: parent)
         context.insert(subtask)
+        diagnostics.record("addSubtask",
+            "task=\(Self.short(subtask.id)) parent=\(Self.short(parent.id))")
         // The new subtask is incomplete, so a parent that was marked done is no longer
         // fully done — re-derive its completion from its subtasks.
         parent.syncDoneWithSubtasks()
@@ -370,6 +375,8 @@ final class TaskStore {
         let createdAt  = task.createdAt
         let afterIndex = project.tasks.firstIndex(where: { $0.id == task.id }).map { $0 - 1 }
         let afterTask  = afterIndex.flatMap { $0 >= 0 ? project.tasks[$0] : nil }
+        diagnostics.record("deleteTask",
+            "task=\(Self.short(task.id)) project=\(Self.short(project.id)) subtasks=\(task.subtasks.count) isSubtask=\(task.parent != nil)")
 
         // Cancel reminders before deleting
         reminderManager?.cancel(taskID: task.id)
@@ -394,6 +401,8 @@ final class TaskStore {
     // MARK: - Private helpers
 
     fileprivate func deleteSubtask(_ subtask: Task, from parent: Task) {
+        diagnostics.record("deleteSubtask",
+            "task=\(Self.short(subtask.id)) parent=\(Self.short(parent.id))")
         parent.subtasks.removeAll { $0.id == subtask.id }
         subtask.project.tasks.removeAll { $0.id == subtask.id }
         context.delete(subtask)
@@ -401,6 +410,8 @@ final class TaskStore {
     }
 
     fileprivate func unindentTask(_ task: Task, fromParent parent: Task, into project: Project) {
+        diagnostics.record("unindentTask",
+            "task=\(Self.short(task.id)) fromParent=\(Self.short(parent.id)) project=\(Self.short(project.id))")
         // Restore the larger top-level (title3) title font when promoting back up.
         task.titleRTF = Task.resizingFontRTF(task.titleRTF, to: NSFont.preferredFont(forTextStyle: .title3).pointSize)
         // Clear ONLY the to-one `parent` side (the un-nest mirror of indentTask); the

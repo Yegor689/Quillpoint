@@ -45,10 +45,31 @@ final class DiagnosticLog {
         }
     }
 
+    /// The app/OS environment a bug report needs up front — version, build, and OS. Kept
+    /// with the log so an exported file is self-contained.
+    private static var environmentLines: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build   = info?["CFBundleVersion"] as? String ?? "?"
+        let os      = ProcessInfo.processInfo.operatingSystemVersion
+        #if arch(arm64)
+        let arch = "arm64"
+        #elseif arch(x86_64)
+        let arch = "x86_64"
+        #else
+        let arch = "unknown"
+        #endif
+        return """
+        App: Quillpoint \(version) (build \(build))
+        macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion) / \(arch)
+        """
+    }
+
     /// The full buffer as a single text document, for export.
     func exportText() -> String {
         let header = """
         Quillpoint diagnostics
+        \(Self.environmentLines)
         Exported: \(Self.timestamp.string(from: Date()))
         Entries: \(entries.count)
         (Structural actions only - no task titles or descriptions.)
@@ -56,8 +77,6 @@ final class DiagnosticLog {
         """
         return header + entries.joined(separator: "\n") + "\n"
     }
-
-    func clear() { entries.removeAll() }
 
     // MARK: - Invariant checking
 

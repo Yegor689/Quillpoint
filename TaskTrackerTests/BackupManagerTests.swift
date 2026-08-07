@@ -173,6 +173,113 @@ struct BackupManagerTests {
         #expect(Set(clean.subtasks.map(\.plainTitle)) == ["Vacuum", "Dishes"])
     }
 
+    /// Subtask nesting must survive a restore *on disk*, not just in the live context.
+    ///
+    /// `restore(backup:)` wires parent/child by setting BOTH sides (`task.parent = parent`
+    /// AND `parent.subtasks.append(task)`). With an explicit `@Relationship(inverse:)` that
+    /// is a double-write, and the same pattern in TaskStore.indentTask made nesting silently
+    /// fail to persist — subtasks loaded back as ROOT tasks after a reopen. The existing
+    /// round-trip test only inspects the in-memory context right after restore, where the
+    /// objects look correct either way, so it cannot catch that class of bug.
+    ///
+    /// This closes the app's worst-case gap: a restore that looks fine, then loses the
+    /// hierarchy on the next launch. Reopens the store from disk and re-asserts.
+    @Test func restoredNestingSurvivesReopeningTheStore() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup(label: "nesting"))
+
+        // Flatten the hierarchy so the restore has real work to do: promote both subtasks
+        // to root tasks. If restore didn't rebuild nesting, the reopen below would show
+        // these as roots and the test fails.
+        for t in try f.tasks() where t.parent != nil { t.parent = nil }
+        try f.save()
+        #expect(try f.tasks().allSatisfy { $0.parent == nil }, "hierarchy flattened")
+
+        try f.manager.restore(backup: backup)
+        try f.context.save()
+
+        // Snapshot the restored store to a NEW file, then open that — equivalent to what
+        // the next launch reads, but at a fresh URL, so we never reopen a container at a
+        // URL another container still holds (which SIGTRAPs on the current beta).
+        let copyURL = f.dir.appendingPathComponent("reopened-\(UUID().uuidString).store")
+        let snapshotted = try #require(f.manager.createBackup(label: "verify"))
+        try FileManager.default.copyItem(at: snapshotted.url, to: copyURL)
+
+        let schema = Schema([Project.self, Task.self])
+        let reopened = try ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(schema: schema, url: copyURL))
+        let ctx = ModelContext(reopened)
+
+        let all = try ctx.fetch(FetchDescriptor<Task>())
+        #expect(all.count == 6)
+
+        let clean = try #require(all.first { $0.plainTitle == "Clean flat" })
+        #expect(Set(clean.subtasks.map(\.plainTitle)) == ["Vacuum", "Dishes"],
+                "parent still lists both subtasks after reopen")
+
+        // The to-one side is what actually persists; assert it directly.
+        for title in ["Vacuum", "Dishes"] {
+            let sub = try #require(all.first { $0.plainTitle == title })
+            #expect(sub.parent?.id == clean.id, "\(title) is still nested under Clean flat")
+        }
+        // And nothing silently became a root task.
+        #expect(all.filter { $0.parent == nil }.count == 4,
+                "exactly the 4 seeded root tasks remain roots")
+    }
+
+    /// Deleting a backup must remove its SQLite sidecars too.
+    ///
+    /// SQLite names them "<store>-wal" / "<store>-shm". deleteFile previously built those
+    /// paths with appendingPathExtension, which yields "<store>.store.wal" — a file that
+    /// never exists — so the removals silently no-opped and sidecars were orphaned. A
+    /// leftover -wal outliving its .store can later attach to a new backup that reuses the
+    /// filename, which is a corruption vector rather than mere litter.
+    @Test func deletingABackupRemovesItsSidecarFiles() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+        let backup = try #require(f.manager.createBackup(label: "sidecars"))
+
+        // VACUUM INTO writes a self-contained file, so simulate the sidecars that a
+        // copied-in store (e.g. via restoreStoreFile) would bring with it.
+        let fm = FileManager.default
+        let wal = URL(fileURLWithPath: backup.url.path + "-wal")
+        let shm = URL(fileURLWithPath: backup.url.path + "-shm")
+        try Data("wal".utf8).write(to: wal)
+        try Data("shm".utf8).write(to: shm)
+        #expect(fm.fileExists(atPath: wal.path))
+
+        f.manager.delete(backup: backup)
+
+        #expect(fm.fileExists(atPath: backup.url.path) == false, "store removed")
+        #expect(fm.fileExists(atPath: wal.path) == false, "-wal sidecar removed")
+        #expect(fm.fileExists(atPath: shm.path) == false, "-shm sidecar removed")
+    }
+
+    /// Editing task TEXT must not be invisible to the auto-backup content check.
+    ///
+    /// The fingerprint is (taskCount, latestActivity). Retitling or rewriting a task's
+    /// notes changes neither, so a session spent editing text looks "unchanged" and the
+    /// auto-backup skips — not once, but for as long as the editing continues. The user
+    /// believes auto-backup is on while none of that work is ever captured.
+    @Test func editingTaskTextIsVisibleToTheContentFingerprint() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+
+        let before = try #require(StoreFingerprint.fromTasks(try f.tasks()))
+
+        // Rewrite a task's title and notes — no adds, deletes, or completions.
+        let t = try #require(try f.tasks().first { $0.plainTitle == "Clean flat" })
+        t.titleRTF = Task.rtf(from: "Completely different title")
+        t.descRTF = Task.rtf(from: "and different notes")
+        try f.save()
+
+        let after = StoreFingerprint.fromTasks(try f.tasks())
+        #expect(after != before,
+                "a text edit must change the fingerprint, or auto-backup skips it forever")
+    }
+
     /// FUZZ: many randomized datasets, each round-tripped backup→restore, asserting EXACT
     /// per-field equality. This is the guard against silent `cloneScalars` field drops —
     /// if a Task field stops being copied on restore, some random dataset will differ and
