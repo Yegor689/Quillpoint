@@ -63,19 +63,19 @@ enum WhatsNew {
             WhatsNewItem(
                 icon: "bell.badge",
                 title: "Completed tasks stop nagging",
-                detail: "Ticking a task off left its reminder pending, so a notification could still arrive for work you'd already finished. Completing a task now clears its reminder — and finishing the last subtask completes its parent, however you check it off."),
+                detail: "Ticking a task off now clears its reminder, so a notification can't arrive for work you've already finished."),
             WhatsNewItem(
                 icon: "textformat",
                 title: "Simpler text editing",
-                detail: "The typing shortcuts that auto-converted asterisks and underscores to bold and italic are gone — they fired unpredictably and consumed the characters you typed. Use ⌘B and ⌘I on a selection instead. Text you've already styled is unchanged."),
+                detail: "The asterisk and underscore typing shortcuts are gone — use ⌘B and ⌘I instead. Text you've already styled is unchanged."),
             WhatsNewItem(
                 icon: "externaldrive.badge.checkmark",
                 title: "Safer backups and imports",
-                detail: "Restoring an older backup no longer warns you about stale data on every launch afterwards, a failed backup or export now says so instead of quietly doing nothing, and an import can't replace your data unless a safety backup was written first."),
+                detail: "A failed backup or export now says so instead of quietly doing nothing, and restoring an older backup no longer warns you every launch afterwards."),
             WhatsNewItem(
                 icon: "clock.arrow.circlepath",
                 title: "History kept",
-                detail: "What's New now keeps every release's notes. Open it any time from Help ▸ What's New in Quillpoint to look back at earlier versions."),
+                detail: "What's New now keeps every release's notes — browse them from Help ▸ What's New."),
         ]),
         // Every earlier release exactly as it shipped, generated from that version's
         // tag — including entries a patch carried forward from its predecessor.
