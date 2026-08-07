@@ -116,12 +116,6 @@ final class AppSettings {
         didSet { defaults.set(showUpcoming, forKey: Keys.showUpcoming) }
     }
 
-    /// Whether the Report lists completed subtasks alongside their parents. Off by default,
-    /// so the log shows only parent/standalone tasks and doesn't look padded by subtasks.
-    var showSubtasksInReport: Bool {
-        didSet { defaults.set(showSubtasksInReport, forKey: Keys.showSubtasksInReport) }
-    }
-
     private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -137,7 +131,6 @@ final class AppSettings {
         static let defaultReminderPreset = "settings.defaultReminderPreset"
         static let defaultLanding        = "settings.defaultLanding"
         static let showUpcoming          = "settings.showUpcoming"
-        static let showSubtasksInReport  = "settings.showSubtasksInReport"
     }
 
     init() {
@@ -154,7 +147,6 @@ final class AppSettings {
         defaultReminderPresetRaw = d.string(forKey: Keys.defaultReminderPreset) ?? ""
         defaultLandingRaw        = d.string(forKey: Keys.defaultLanding) ?? ""
         showUpcoming             = d.object(forKey: Keys.showUpcoming) as? Bool ?? false
-        showSubtasksInReport     = d.object(forKey: Keys.showSubtasksInReport) as? Bool ?? false
     }
 
     /// The filter a fresh launch should use, or nil to keep the last-used one.
@@ -174,7 +166,6 @@ final class AppSettings {
         defaultReminderPresetRaw = ""
         defaultLandingRaw        = ""
         showUpcoming             = false
-        showSubtasksInReport     = false
     }
 }
 

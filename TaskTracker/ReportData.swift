@@ -42,15 +42,21 @@ struct TaskFacts {
     let createdAt: Date
     let completedAt: Date?
     let projectTitle: String
-    let isSubtask: Bool
+    /// The parent task's id for a subtask; nil for a root/standalone task.
+    let parentID: UUID?
+
+    var isSubtask: Bool { parentID != nil }
 }
 
-/// One task line in a day's created/completed list.
+/// One task line in a day's completed list. Subtasks are never their own line — they
+/// hang off their parent in `subtasks`, shown by an expander that starts collapsed.
 struct ReportTask: Identifiable {
     let id: UUID
     let title: String
     let projectTitle: String
-    let isSubtask: Bool
+    /// Subtasks of this task that completed on the same day. Empty for a task with no
+    /// subtasks, and for every subtask (nesting is one level, matching the data model).
+    let subtasks: [ReportTask]
 }
 
 /// A single day's completed tasks. Only days with a completion appear in the log.
@@ -73,9 +79,10 @@ enum ReportBuilder {
     /// many days had a completion. `facts`/`interval` are the same inputs as `build`.
     /// When `includeSubtasks` is false, subtasks are excluded from every count so the
     /// summary matches the parent-only log.
-    static func summarize(facts: [TaskFacts], interval: DateInterval,
-                          includeSubtasks: Bool = true) -> RangeSummary {
-        let facts = includeSubtasks ? facts : facts.filter { !$0.isSubtask }
+    static func summarize(facts: [TaskFacts], interval: DateInterval) -> RangeSummary {
+        // Counts cover root tasks only, matching the log's top-level rows — subtasks are
+        // detail nested under a parent, not separate items worth counting.
+        let facts = facts.filter { !$0.isSubtask }
         func inRange(_ d: Date?) -> Bool { d.map { interval.contains($0) } ?? false }
         let created = facts.filter { inRange($0.createdAt) }.count
         let completedFacts = facts.filter { inRange($0.completedAt) }
@@ -84,25 +91,38 @@ enum ReportBuilder {
     }
 
     /// Builds the day-by-day log of COMPLETED tasks over `facts` within `interval`, newest
-    /// day first. A task appears under the day its `completedAt` falls on. Days with no
-    /// completion are omitted. When `includeSubtasks` is false, subtasks are dropped so only
-    /// parent (and standalone) tasks show — otherwise a completed parent and its subtasks
-    /// list flat at the same level.
+    /// day first. Days with no completion are omitted.
+    ///
+    /// Only root tasks become rows. A subtask is never listed on its own — it's nested
+    /// under its parent, revealed by an expander that starts collapsed, and only when the
+    /// parent completed on that same day. Because a parent completes exactly when its LAST
+    /// subtask does, subtasks finished on earlier days have no completed parent to sit
+    /// under on those days and are deliberately not shown then; they appear with the
+    /// parent on the day the whole thing was finished.
     static func build(facts: [TaskFacts], interval: DateInterval,
-                      includeSubtasks: Bool = true,
                       calendar: Calendar = .current) -> [DayLog] {
-        let facts = includeSubtasks ? facts : facts.filter { !$0.isSubtask }
         func inRange(_ d: Date?) -> Bool { d.map { interval.contains($0) } ?? false }
-        func line(_ f: TaskFacts) -> ReportTask {
+        func line(_ f: TaskFacts, subtasks: [ReportTask] = []) -> ReportTask {
             ReportTask(id: f.id, title: f.title.isEmpty ? "Untitled" : f.title,
-                       projectTitle: f.projectTitle, isSubtask: f.isSubtask)
+                       projectTitle: f.projectTitle, subtasks: subtasks)
+        }
+
+        // Subtasks bucketed by parent and completion day, so a parent row can pick up the
+        // children that finished alongside it.
+        var subtasksByParentDay: [UUID: [Date: [TaskFacts]]] = [:]
+        for f in facts where f.isSubtask {
+            guard let parentID = f.parentID, let done = f.completedAt, inRange(done) else { continue }
+            subtasksByParentDay[parentID, default: [:]][calendar.startOfDay(for: done), default: []].append(f)
         }
 
         var completedByDay: [Date: [ReportTask]] = [:]
-        for f in facts {
-            if let done = f.completedAt, inRange(done) {
-                completedByDay[calendar.startOfDay(for: done), default: []].append(line(f))
-            }
+        for f in facts where !f.isSubtask {
+            guard let done = f.completedAt, inRange(done) else { continue }
+            let day = calendar.startOfDay(for: done)
+            let children = (subtasksByParentDay[f.id]?[day] ?? [])
+                .map { line($0) }
+                .sorted { $0.title < $1.title }
+            completedByDay[day, default: []].append(line(f, subtasks: children))
         }
 
         return completedByDay.keys.sorted(by: >).map { day in

@@ -77,13 +77,6 @@ private struct TaskSettings: View {
                 }
                 Toggle("Confirm before deleting tasks with subtasks", isOn: $settings.confirmBeforeDelete)
             }
-
-            Section("Report") {
-                Toggle("Include subtasks", isOn: $settings.showSubtasksInReport)
-                Text("When off, the Report lists only parent and standalone tasks, so completed subtasks don't pad the day-by-day log.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
     }

@@ -7,7 +7,6 @@ import SwiftData
 struct ReportView: View {
     @Query private var projects: [Project]
     @Environment(\.appAccent) private var appAccent
-    @Environment(AppSettings.self) private var settings
 
     @State private var range: ReportRange = .last30
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
@@ -24,22 +23,19 @@ struct ReportView: View {
         return range.interval(now: Date()) ?? DateInterval(start: customStart, end: customEnd)
     }
 
-    /// Flattened task facts (roots + subtasks) for the log. `isSubtask` lets the builder drop
-    /// subtasks when the "Include subtasks" setting is off.
+    /// Flattened task facts (roots + subtasks) for the log. `parentID` lets the builder nest
+    /// each subtask under the parent it finished with.
     private var facts: [TaskFacts] {
         projects.flatMap { project in
             project.tasks.map { task in
                 TaskFacts(id: task.id, title: task.plainTitle, createdAt: task.createdAt,
                           completedAt: task.completedAt, projectTitle: project.title,
-                          isSubtask: task.parent != nil)
+                          parentID: task.parent?.id)
             }
         }
     }
 
-    private var days: [DayLog] {
-        ReportBuilder.build(facts: facts, interval: interval,
-                            includeSubtasks: settings.showSubtasksInReport)
-    }
+    private var days: [DayLog] { ReportBuilder.build(facts: facts, interval: interval) }
 
     var body: some View {
         // Wrapped in a NavigationStack so the detail column has the same structure as the
@@ -66,8 +62,7 @@ struct ReportView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 80)
                 } else {
-                    summaryCard(ReportBuilder.summarize(facts: facts, interval: interval,
-                                                        includeSubtasks: settings.showSubtasksInReport))
+                    summaryCard(ReportBuilder.summarize(facts: facts, interval: interval))
                     ForEach(log) { day in
                         DaySection(day: day, tint: appAccent)
                     }
@@ -181,30 +176,70 @@ private struct DaySection: View {
     private func taskList(tasks: [ReportTask]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(tasks) { task in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] ?? $0[.bottom] }
-                    Text(task.title)
-                        .font(.body)
-                        .lineLimit(1)
-                    if task.isSubtask {
-                        // A quiet marker so a completed subtask reads as a child, not a
-                        // sibling, when the "Include subtasks" setting lists them flat.
-                        Text("Subtask")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.12), in: Capsule())
-                    }
-                    Spacer(minLength: 8)
-                    Text(task.projectTitle)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
+                TaskRow(task: task)
+            }
+        }
+    }
+}
+
+/// One completed task in a day's log. A task that finished alongside subtasks carries a
+/// small inline chevron after its title; the subtasks stay hidden until it's clicked.
+///
+/// The chevron sits ON the title line rather than in a DisclosureGroup or its own row, so
+/// a collapsed row is exactly as tall as a row with no subtasks — the log's height doesn't
+/// change just because tasks happen to have children.
+private struct TaskRow: View {
+    let task: ReportTask
+    @State private var isExpanded = false
+
+    private var hasSubtasks: Bool { !task.subtasks.isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] ?? $0[.bottom] }
+                Text(task.title)
+                    .font(.body)
+                    .lineLimit(1)
+                if hasSubtasks {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityLabel(isExpanded ? "Hide subtasks" : "Show subtasks")
                 }
+                Spacer(minLength: 8)
+                Text(task.projectTitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard hasSubtasks else { return }
+                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+            }
+
+            if hasSubtasks && isExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(task.subtasks) { sub in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.green.opacity(0.7))
+                                .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] ?? $0[.bottom] }
+                            Text(sub.title)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                        }
+                    }
+                }
+                .padding(.leading, 24)
             }
         }
     }

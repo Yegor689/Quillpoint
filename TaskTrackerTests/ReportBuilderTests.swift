@@ -15,9 +15,10 @@ struct ReportBuilderTests {
         cal.date(from: DateComponents(year: y, month: m, day: d))!
     }
     private func fact(_ title: String, created: Date, completed: Date? = nil,
-                      project: String = "A", isSubtask: Bool = false) -> TaskFacts {
-        TaskFacts(id: UUID(), title: title, createdAt: created, completedAt: completed,
-                  projectTitle: project, isSubtask: isSubtask)
+                      project: String = "A", id: UUID = UUID(),
+                      parentID: UUID? = nil) -> TaskFacts {
+        TaskFacts(id: id, title: title, createdAt: created, completedAt: completed,
+                  projectTitle: project, parentID: parentID)
     }
 
     /// Jun 1–10 inclusive: [Jun 1 00:00, Jun 11 00:00).
@@ -74,29 +75,61 @@ struct ReportBuilderTests {
         #expect(log.isEmpty)
     }
 
-    @Test func excludesSubtasksWhenIncludeSubtasksIsFalse() {
+    /// Subtasks are never their own row — they nest under the parent they finished with,
+    /// so the log's top level stays one line per real task.
+    @Test func subtasksNestUnderTheirParentInsteadOfListingFlat() {
+        let parentID = UUID()
         let facts = [
-            fact("Parent",  created: day(2026, 6, 2), completed: day(2026, 6, 2)),
-            fact("Child A", created: day(2026, 6, 2), completed: day(2026, 6, 2), isSubtask: true),
-            fact("Child B", created: day(2026, 6, 2), completed: day(2026, 6, 2), isSubtask: true),
+            fact("Parent",  created: day(2026, 6, 2), completed: day(2026, 6, 2), id: parentID),
+            fact("Child B", created: day(2026, 6, 2), completed: day(2026, 6, 2), parentID: parentID),
+            fact("Child A", created: day(2026, 6, 2), completed: day(2026, 6, 2), parentID: parentID),
         ]
-        // Default (include): all three list flat on Jun 2, with the subtask flag preserved.
-        let withSubs = ReportBuilder.build(facts: facts, interval: june, calendar: cal)
-        #expect(withSubs.first?.completed.map(\.title) == ["Child A", "Child B", "Parent"])
-        #expect(withSubs.first?.completed.map(\.isSubtask) == [true, true, false])
+        let log = ReportBuilder.build(facts: facts, interval: june, calendar: cal)
 
-        // Off: only the parent survives.
-        let parentsOnly = ReportBuilder.build(facts: facts, interval: june,
-                                              includeSubtasks: false, calendar: cal)
-        #expect(parentsOnly.first?.completed.map(\.title) == ["Parent"])
+        // One top-level row, not three.
+        #expect(log.first?.completed.map(\.title) == ["Parent"])
+        // Both children hang off it, title-sorted.
+        #expect(log.first?.completed.first?.subtasks.map(\.title) == ["Child A", "Child B"])
     }
 
-    @Test func summaryExcludesSubtasksWhenIncludeSubtasksIsFalse() {
+    /// A parent completes exactly when its LAST subtask does, so subtasks finished on
+    /// earlier days have no completed parent to sit under. Those days show nothing rather
+    /// than orphan rows; the work appears with the parent on the day it was all finished.
+    @Test func subtasksFinishedBeforeTheirParentAreNotShownOnThoseDays() {
+        let parentID = UUID()
         let facts = [
-            fact("Parent",  created: day(2026, 6, 2), completed: day(2026, 6, 3)),
-            fact("Child",   created: day(2026, 6, 2), completed: day(2026, 6, 3), isSubtask: true),
+            // Parent completes Jun 5, along with its final subtask.
+            fact("Parent", created: day(2026, 6, 1), completed: day(2026, 6, 5), id: parentID),
+            fact("Late",   created: day(2026, 6, 1), completed: day(2026, 6, 5), parentID: parentID),
+            // This one finished Jun 2, while the parent was still open.
+            fact("Early",  created: day(2026, 6, 1), completed: day(2026, 6, 2), parentID: parentID),
         ]
-        let s = ReportBuilder.summarize(facts: facts, interval: june, includeSubtasks: false)
+        let log = ReportBuilder.build(facts: facts, interval: june, calendar: cal)
+
+        // Only Jun 5 has a day entry — Jun 2's lone subtask doesn't create one.
+        #expect(log.map { cal.component(.day, from: $0.day) } == [5])
+        #expect(log.first?.completed.map(\.title) == ["Parent"])
+        #expect(log.first?.completed.first?.subtasks.map(\.title) == ["Late"],
+                "only the subtask that finished with the parent nests under it")
+    }
+
+    /// A task with no subtasks carries an empty `subtasks`, so the view shows no expander
+    /// and the row keeps its normal height.
+    @Test func taskWithoutSubtasksHasNoNestedChildren() {
+        let log = ReportBuilder.build(
+            facts: [fact("Solo", created: day(2026, 6, 2), completed: day(2026, 6, 2))],
+            interval: june, calendar: cal)
+        #expect(log.first?.completed.first?.subtasks.isEmpty == true)
+    }
+
+    /// Summary counts follow the log's top level: subtasks are detail, not separate items.
+    @Test func summaryCountsRootTasksOnly() {
+        let parentID = UUID()
+        let facts = [
+            fact("Parent", created: day(2026, 6, 2), completed: day(2026, 6, 3), id: parentID),
+            fact("Child",  created: day(2026, 6, 2), completed: day(2026, 6, 3), parentID: parentID),
+        ]
+        let s = ReportBuilder.summarize(facts: facts, interval: june)
         #expect(s.created == 1, "only the parent counts")
         #expect(s.completed == 1, "only the parent counts")
         #expect(s.activeDays == 1)
