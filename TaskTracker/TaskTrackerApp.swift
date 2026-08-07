@@ -45,6 +45,9 @@ struct TaskTrackerApp: App {
     @State private var services: AppServices?
     /// Presents the What's New screen (auto once per new version, or via the menu).
     @State private var showWhatsNew = false
+    /// Whether What's New opened itself after an update (vs. being asked for from Help),
+    /// which decides between a plain version label and the browsable archive picker.
+    @State private var whatsNewIsAutomatic = false
     /// Set when the user explicitly chooses to continue past a suspected data regression
     /// (a false positive — e.g. they really did delete a lot). Lets the normal UI show
     /// for the rest of the session instead of holding them on the recovery screen.
@@ -189,7 +192,10 @@ struct TaskTrackerApp: App {
                 settings.applyAppearance()
                 clearExpiredReminders()
                 applyDefaultFilter()
-                if WhatsNew.shouldPresent() { showWhatsNew = true }
+                if WhatsNew.shouldPresent() {
+                    whatsNewIsAutomatic = true
+                    showWhatsNew = true
+                }
             }
             // A notification's sound is baked into its content when it's SCHEDULED, so
             // flipping this toggle wouldn't affect reminders already queued — they'd keep
@@ -199,9 +205,11 @@ struct TaskTrackerApp: App {
                 rescheduleFutureReminders()
             }
             .sheet(isPresented: $showWhatsNew, onDismiss: { WhatsNew.markSeen() }) {
-                WhatsNewView()
+                WhatsNewView(isAutoPresented: whatsNewIsAutomatic)
             }
+            // Opened deliberately from Help — show the version picker and ship dates.
             .onReceive(NotificationCenter.default.publisher(for: .showWhatsNew)) { _ in
+                whatsNewIsAutomatic = false
                 showWhatsNew = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .markTaskDone)) { note in
