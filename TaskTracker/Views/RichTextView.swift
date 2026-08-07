@@ -247,10 +247,11 @@ struct RichTitleField: NSViewRepresentable {
 
         private func applyMarkdownShortcuts(_ tv: NSTextView) {
             guard let storage = tv.textStorage else { return }
-            let str = storage.string
-            guard str.utf16.count > 0 else { return }
-            let lastChar = str[str.index(before: str.endIndex)]
-            guard lastChar == " " || lastChar == "\n" else { return }
+            // `str.last` rather than indexing by UTF-16 count then Character offset — the
+            // two units disagree for anything outside the BMP (emoji), and the guard only
+            // needs "is the last character a space/newline".
+            guard let lastChar = storage.string.last,
+                  lastChar == " " || lastChar == "\n" else { return }
             applyPattern(storage: storage, tv: tv, pattern: "\\*\\*(.+?)\\*\\*", trait: .boldFontMask)
             applyPattern(storage: storage, tv: tv, pattern: "(?<![*_])_(.+?)_(?![*_])", trait: .italicFontMask)
         }
@@ -259,19 +260,39 @@ struct RichTitleField: NSViewRepresentable {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
             let matches = regex.matches(in: storage.string, range: NSRange(location: 0, length: storage.length))
             guard !matches.isEmpty else { return }
+            // Preserve the caret across the rewrite. Every match sits BEFORE the caret in
+            // practice (the shortcut fires on the trailing space), so the caret shifts left
+            // by the markers removed ahead of it. Jumping it to storage.length instead —
+            // as this used to — threw the cursor to the end of the field when the user was
+            // editing in the middle of a title.
+            let caret = tv.selectedRange().location
+            var removedBeforeCaret = 0
+
             storage.beginEditing()
             for match in matches.reversed() {
+                let full = match.range(at: 0)
                 let inner = match.range(at: 1)
-                guard let innerSwift = Range(inner, in: storage.string) else { continue }
-                let text = String(storage.string[innerSwift])
-                let base = storage.attribute(.font, at: inner.location, effectiveRange: nil) as? NSFont ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-                let newFont = NSFontManager.shared.font(withFamily: base.familyName ?? "System", traits: trait, weight: 5, size: base.pointSize) ?? base
-                let replacement = NSMutableAttributedString(string: text)
-                replacement.addAttribute(.font, value: newFont, range: NSRange(location: 0, length: replacement.length))
-                storage.replaceCharacters(in: match.range(at: 0), with: replacement)
+                guard Range(inner, in: storage.string) != nil else { continue }
+                // Keep the inner run's existing attributes (link, colour, …) and change only
+                // the font, the way the paste handler does. Rebuilding from a plain String
+                // dropped everything but the font.
+                let replacement = NSMutableAttributedString(
+                    attributedString: storage.attributedSubstring(from: inner))
+                let base = storage.attribute(.font, at: inner.location, effectiveRange: nil) as? NSFont
+                    ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+                let newFont = NSFontManager.shared.font(withFamily: base.familyName ?? "System",
+                                                        traits: trait, weight: 5, size: base.pointSize) ?? base
+                replacement.addAttribute(.font, value: newFont,
+                                         range: NSRange(location: 0, length: replacement.length))
+                if full.location + full.length <= caret {
+                    removedBeforeCaret += full.length - replacement.length
+                }
+                storage.replaceCharacters(in: full, with: replacement)
             }
             storage.endEditing()
-            tv.setSelectedRange(NSRange(location: storage.length, length: 0))
+
+            let newCaret = max(0, min(storage.length, caret - removedBeforeCaret))
+            tv.setSelectedRange(NSRange(location: newCaret, length: 0))
         }
     }
 }
