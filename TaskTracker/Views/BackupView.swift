@@ -8,6 +8,7 @@ struct BackupView: View {
     @State private var showRestoreConfirm = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var errorTitle = "Restore Failed"
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -36,6 +37,7 @@ struct BackupView: View {
                     try backupManager.restore(backup: backup)
                     dismiss()
                 } catch {
+                    errorTitle = "Restore Failed"
                     errorMessage = error.localizedDescription
                     showError = true
                 }
@@ -46,7 +48,8 @@ struct BackupView: View {
                 Text("This replaces ALL projects and tasks with the snapshot from \(Self.dateFormatter.string(from: b.date)) — it is not a per-project restore. Your current data is saved to a single “Before Restore” backup first, so you can undo.")
             }
         }
-        .alert("Restore Failed", isPresented: $showError) {
+        // Shared by restore and backup failures — errorTitle says which.
+        .alert(errorTitle, isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage)
@@ -147,9 +150,18 @@ struct BackupView: View {
 
     // MARK: Actions / helpers
 
+    /// createBackup returns nil when the snapshot fails (no store file, disk full,
+    /// permissions). Discarding that left the button looking like it worked — the label
+    /// field cleared and no row appeared — so the user believed they had a backup they
+    /// didn't. Report it and keep the typed label so they can retry.
     private func createBackup() {
         let trimmed = labelText.trimmingCharacters(in: .whitespaces)
-        backupManager.createBackup(label: trimmed)
+        guard backupManager.createBackup(label: trimmed) != nil else {
+            errorTitle = "Backup Failed"
+            errorMessage = "Couldn't write the backup. Check that there's enough free disk space and try again."
+            showError = true
+            return
+        }
         labelText = ""
     }
 
