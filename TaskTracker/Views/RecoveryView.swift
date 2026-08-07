@@ -174,7 +174,18 @@ struct RecoveryView: View {
         panel.nameFieldStringValue = "Quillpoint-diagnostics.txt"
         panel.title = "Export Diagnostics"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            // Surfaced with NSAlert to match the modal NSSavePanel above. Silently failing
+            // here is the worst case: the user is already on the recovery screen and this
+            // log is what they'd attach to a bug report.
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Export Failed"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
 }
 

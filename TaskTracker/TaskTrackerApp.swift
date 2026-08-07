@@ -354,21 +354,44 @@ struct TaskTrackerApp: App {
         panel.nameFieldStringValue = "Quillpoint-diagnostics.txt"
         panel.title = "Export Diagnostics"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try DiagnosticLog.shared.exportText().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            showExportError(error)
+        }
+    }
+
+    private func showExportError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Export Failed"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     /// Exports all projects and tasks to a user-chosen JSON file — a portable,
     /// human-readable copy of everything in the app. Read-only; never mutates data.
     private func exportData() {
         guard let container = services?.container else { return }
-        guard let data = try? DataExportManager.json(from: container.mainContext) else { return }
+        // Serialization and the write are both reported: a silent failure here looks
+        // exactly like a successful backup, which is the worst way for this to fail.
+        let data: Data
+        do {
+            data = try DataExportManager.json(from: container.mainContext)
+        } catch {
+            return showExportError(error)
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10) // yyyy-MM-dd
         panel.nameFieldStringValue = "Quillpoint-data-\(stamp).json"
         panel.title = "Export All Data"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            showExportError(error)
+        }
     }
 
     /// Imports a JSON export. Validates first (a bad file changes nothing), asks the
