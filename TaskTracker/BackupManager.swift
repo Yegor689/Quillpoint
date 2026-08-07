@@ -469,18 +469,27 @@ final class BackupManager {
         let staged = fm.temporaryDirectory.appending(component: "restore-\(UUID().uuidString).store")
         defer { for e in ["", "-wal", "-shm"] { try? fm.removeItem(at: URL(fileURLWithPath: staged.path + e)) } }
         try fm.copyItem(at: sourceURL, to: staged)
-        for ext in ["wal", "shm"] {
-            let side = sourceURL.appendingPathExtension(ext)
-            if fm.fileExists(atPath: side.path) { try? fm.copyItem(at: side, to: staged.appendingPathExtension(ext)) }
+        // SQLite names its sidecars "<store>-wal"/"<store>-shm". These used to be built
+        // with appendingPathExtension, giving "<store>.store.wal" — files that never
+        // exist — so a source's sidecars were silently skipped on both the copy and the
+        // move below, and the restored store arrived without them. Same string-append
+        // form as the `defer` cleanup above and the snapshot/delete paths.
+        for suffix in ["-wal", "-shm"] {
+            let side = URL(fileURLWithPath: sourceURL.path + suffix)
+            if fm.fileExists(atPath: side.path) {
+                try? fm.copyItem(at: side, to: URL(fileURLWithPath: staged.path + suffix))
+            }
         }
 
         // Copy succeeded — now it's safe to set the current store aside and swap in the
         // staged copy. Reuses the same Quarantine location as "Start Fresh".
         PersistenceController.startFresh(storeURL: storeURL)
         try fm.moveItem(at: staged, to: storeURL)
-        for ext in ["wal", "shm"] {
-            let side = staged.appendingPathExtension(ext)
-            if fm.fileExists(atPath: side.path) { try? fm.moveItem(at: side, to: storeURL.appendingPathExtension(ext)) }
+        for suffix in ["-wal", "-shm"] {
+            let side = URL(fileURLWithPath: staged.path + suffix)
+            if fm.fileExists(atPath: side.path) {
+                try? fm.moveItem(at: side, to: URL(fileURLWithPath: storeURL.path + suffix))
+            }
         }
     }
 

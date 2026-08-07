@@ -280,6 +280,42 @@ struct BackupManagerTests {
                 "a text edit must change the fingerprint, or auto-backup skips it forever")
     }
 
+    /// restoreStoreFile must carry a source's SQLite sidecars across with it.
+    ///
+    /// This is the recovery-screen path, used when the store won't open at all. Its sidecar
+    /// paths were built with appendingPathExtension ("<store>.store.wal"), so a source that
+    /// did have a -wal/-shm had them silently skipped on both the copy and the move, and the
+    /// restored store arrived without them. Backups written by VACUUM INTO are
+    /// self-contained, but this same method also restores QUARANTINED stores — real
+    /// WAL-mode stores that can carry a populated -wal.
+    @Test func restoreStoreFileCarriesSidecarsAcross() throws {
+        let f = try Fixture(); defer { f.cleanup() }
+        try seed(f)
+
+        // A source store standing in for a quarantined WAL-mode store: base file + sidecars.
+        let source = f.dir.appendingPathComponent("source.store")
+        let backup = try #require(f.manager.createBackup(label: "src"))
+        let fm = FileManager.default
+        try fm.copyItem(at: backup.url, to: source)
+        try Data("wal-contents".utf8).write(to: URL(fileURLWithPath: source.path + "-wal"))
+        try Data("shm-contents".utf8).write(to: URL(fileURLWithPath: source.path + "-shm"))
+
+        try f.manager.restoreStoreFile(at: source)
+
+        let liveWal = URL(fileURLWithPath: f.storeURL.path + "-wal")
+        let liveShm = URL(fileURLWithPath: f.storeURL.path + "-shm")
+        #expect(fm.fileExists(atPath: f.storeURL.path), "store swapped in")
+        #expect(fm.fileExists(atPath: liveWal.path), "-wal came across")
+        #expect(fm.fileExists(atPath: liveShm.path), "-shm came across")
+        #expect(try Data(contentsOf: liveWal) == Data("wal-contents".utf8),
+                "the source's -wal, not a leftover")
+
+        // The staging temp file and its sidecars are cleaned up, not left in /tmp.
+        let strays = try fm.contentsOfDirectory(atPath: fm.temporaryDirectory.path)
+            .filter { $0.hasPrefix("restore-") }
+        #expect(strays.isEmpty, "staged temp files removed")
+    }
+
     /// FUZZ: many randomized datasets, each round-tripped backup→restore, asserting EXACT
     /// per-field equality. This is the guard against silent `cloneScalars` field drops —
     /// if a Task field stops being copied on restore, some random dataset will differ and
