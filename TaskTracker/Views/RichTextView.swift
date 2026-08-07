@@ -166,9 +166,30 @@ struct RichTitleField: NSViewRepresentable {
             actions.onFocus()
         }
 
+        /// Records where the pending edit lands, BEFORE it happens. This is the only
+        /// reliable source for "what did the user just type and where": by the time
+        /// textDidChange runs, the text view's selectedRange may not yet reflect the
+        /// insertion, so deriving the position from the selection there silently misfires.
+        /// `nil` means the change didn't come from typing (programmatic set, paste, …).
+        private var pendingInsertEnd: Int?
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
+                      replacementString: String?) -> Bool {
+            // applyPattern calls tv.shouldChangeText(in:) to register its rewrite for undo,
+            // which re-enters this method with the REWRITE's range. Verified against a live
+            // NSTextView: it would overwrite the typing position we're here to record.
+            // Ignore those; only genuine user edits update it.
+            guard !isAutoFormatting else { return true }
+            // End of the text once the replacement is applied.
+            pendingInsertEnd = replacementString.map { range.location + ($0 as NSString).length }
+            return true
+        }
+
         func textDidChange(_ notification: Notification) {
             guard !isUpdating, let tv = notification.object as? NSTextView else { return }
-            applyMarkdownShortcuts(tv)
+            let insertEnd = pendingInsertEnd
+            pendingInsertEnd = nil
+            applyMarkdownShortcuts(tv, insertEnd: insertEnd)
             tv.checkTextInDocument(nil)
             tv.invalidateIntrinsicContentSize()
             save(tv)                 // model (in-memory) updated every keystroke
@@ -251,29 +272,50 @@ struct RichTitleField: NSViewRepresentable {
         /// are already consumed — but it re-saves and re-checks spelling every keystroke).
         private var isAutoFormatting = false
 
-        private func applyMarkdownShortcuts(_ tv: NSTextView) {
+        /// Converts `**bold**` / `_italic_` once the user types the space or newline that
+        /// closes them. `insertEnd` is where that typed text ends, captured in
+        /// shouldChangeTextIn before the edit landed.
+        ///
+        /// It used to trigger on `storage.string.last` — the final character of the WHOLE
+        /// field — so the shortcut only fired when the caret happened to be at the very
+        /// end. Styling something mid-title silently did nothing, which is the "only bolds
+        /// half the time" report. Reading tv.selectedRange() here instead is NOT a fix:
+        /// the selection isn't reliably updated yet when this runs, which broke the feature
+        /// outright. The pre-edit range is the one dependable source.
+        private func applyMarkdownShortcuts(_ tv: NSTextView, insertEnd: Int?) {
             guard !isAutoFormatting, let storage = tv.textStorage else { return }
             isAutoFormatting = true
             defer { isAutoFormatting = false }
-            // `str.last` rather than indexing by UTF-16 count then Character offset — the
-            // two units disagree for anything outside the BMP (emoji), and the guard only
-            // needs "is the last character a space/newline".
-            guard let lastChar = storage.string.last,
-                  lastChar == " " || lastChar == "\n" else { return }
-            applyPattern(storage: storage, tv: tv, pattern: "\\*\\*(.+?)\\*\\*", trait: .boldFontMask)
-            applyPattern(storage: storage, tv: tv, pattern: "(?<![*_])_(.+?)_(?![*_])", trait: .italicFontMask)
+
+            let ns = storage.string as NSString
+            // Fall back to end-of-text when there's no recorded insertion (e.g. a
+            // programmatic change), which is the old behaviour and safe.
+            let end = min(insertEnd ?? ns.length, ns.length)
+            guard end > 0 else { return }
+            let typed = ns.substring(with: NSRange(location: end - 1, length: 1))
+            guard typed == " " || typed == "\n" else { return }
+
+            // Search only up to the just-typed closer, so a marker further along the line
+            // can't pair with one behind the cursor and style a span never delimited.
+            let scope = NSRange(location: 0, length: end)
+            applyPattern(storage: storage, tv: tv, in: scope,
+                         pattern: "\\*\\*(.+?)\\*\\*", trait: .boldFontMask)
+            applyPattern(storage: storage, tv: tv, in: scope,
+                         pattern: "(?<![*_])_(.+?)_(?![*_])", trait: .italicFontMask)
         }
 
-        private func applyPattern(storage: NSTextStorage, tv: NSTextView, pattern: String, trait: NSFontTraitMask) {
+        private func applyPattern(storage: NSTextStorage, tv: NSTextView, in scope: NSRange,
+                                  pattern: String, trait: NSFontTraitMask) {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-            let matches = regex.matches(in: storage.string, range: NSRange(location: 0, length: storage.length))
+            let bounded = NSRange(location: 0, length: min(scope.length, storage.length))
+            let matches = regex.matches(in: storage.string, range: bounded)
             guard !matches.isEmpty else { return }
-            // Preserve the caret across the rewrite. Every match sits BEFORE the caret in
-            // practice (the shortcut fires on the trailing space), so the caret shifts left
-            // by the markers removed ahead of it. Jumping it to storage.length instead —
-            // as this used to — threw the cursor to the end of the field when the user was
-            // editing in the middle of a title.
-            let caret = tv.selectedRange().location
+            // Preserve the caret across the rewrite. The caret is the end of the scope (the
+            // character just typed), NOT tv.selectedRange() — the selection isn't reliably
+            // updated at this point. Every match sits before it, so the caret shifts left
+            // by the markers removed ahead of it. Jumping to storage.length instead — as
+            // this used to — threw the cursor to the end of the field mid-title.
+            let caret = bounded.length
             var removedBeforeCaret = 0
 
             // Route the rewrite through shouldChangeText/didChangeText rather than editing
