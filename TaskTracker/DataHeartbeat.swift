@@ -65,10 +65,22 @@ enum DataHeartbeat {
     }
 
     /// The launch-time check: compares the opened store to the last recorded mark and
-    /// returns whether it regressed. Regardless of the result, it records the HIGHER of
-    /// the two marks so the heartbeat always tracks the newest reality the app has seen —
-    /// and so a user who dismisses the warning and keeps working isn't nagged every launch
-    /// for the same regression (their new work advances the mark again).
+    /// returns whether it regressed.
+    ///
+    /// What gets recorded afterwards depends on the result, and the distinction matters:
+    ///
+    /// - **No regression** — keep the furthest-forward mark, so a normal launch can't let
+    ///   the baseline drift backward and mask a later swap.
+    /// - **Regression** — record the CURRENT (lower) mark. The user has now been warned
+    ///   about this exact state; re-flagging it on every subsequent launch would nag them
+    ///   forever for something they may well have chosen, which is what a deliberate
+    ///   restore to an older backup looks like from here. Settling the baseline means the
+    ///   warning fires once per regression event, and a *further* backward jump still
+    ///   trips it again.
+    ///
+    /// Keeping the high mark in the regression case is what made the warning sticky:
+    /// after restoring an older backup, every launch compared the restored store against
+    /// the pre-restore high-water mark and routed the user back to recovery.
     @MainActor
     @discardableResult
     static func checkAtLaunch(context: ModelContext, defaults: UserDefaults = .standard) -> Bool {
@@ -77,13 +89,14 @@ enum DataHeartbeat {
 
         let regressed = last.map { isRegressed(current: current, last: $0) } ?? false
 
-        // Keep the mark at the furthest-forward point seen, so the baseline never drifts
-        // backward to the stale store's level.
-        let baseline = last ?? current
-        let kept = Mark(
-            taskCount: max(baseline.taskCount, current.taskCount),
-            latestActivity: max(baseline.latestActivity, current.latestActivity))
-        record(kept, defaults: defaults)
+        if regressed {
+            record(current, defaults: defaults)
+        } else {
+            let baseline = last ?? current
+            record(Mark(taskCount: max(baseline.taskCount, current.taskCount),
+                        latestActivity: max(baseline.latestActivity, current.latestActivity)),
+                   defaults: defaults)
+        }
 
         return regressed
     }
