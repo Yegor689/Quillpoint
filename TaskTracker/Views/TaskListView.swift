@@ -106,6 +106,26 @@ struct TaskListView: View {
             .map(\.task)
     }
 
+    /// The task immediately above `task` in a visible list, or nil when it's the first
+    /// (or absent). Both callers deliberately work on the FILTERED list, so "previous"
+    /// means the row the user can actually see above this one — nesting under a hidden
+    /// task, or moving focus to one, would be surprising.
+    ///
+    /// Pulled out of the view so the boundary conditions are testable: first row, single
+    /// row, empty list, and a task that isn't in the list at all.
+    static func previousTask(before task: Task, in visible: [Task]) -> Task? {
+        guard let idx = visible.firstIndex(where: { $0.id == task.id }), idx > 0 else { return nil }
+        return visible[idx - 1]
+    }
+
+    /// The task to nest `task` under when indenting, or nil if it can't be indented.
+    /// Nesting is one level deep, so a task that already has subtasks is refused —
+    /// indenting it would hide its children.
+    static func indentTarget(for task: Task, in visible: [Task]) -> Task? {
+        guard task.subtasks.isEmpty else { return nil }
+        return previousTask(before: task, in: visible)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
@@ -250,12 +270,8 @@ struct TaskListView: View {
     }
 
     private func indentTask(_ task: Task) {
-        // Subtasks only nest one level deep; indenting a task that already has
-        // subtasks would hide those grandchildren, so disallow it.
-        guard task.subtasks.isEmpty else { return }
-        let roots = filteredTasks
-        guard let idx = roots.firstIndex(where: { $0.id == task.id }), idx > 0 else { return }
-        taskStore.indentTask(task, previousTask: roots[idx - 1])
+        guard let parent = Self.indentTarget(for: task, in: filteredTasks) else { return }
+        taskStore.indentTask(task, previousTask: parent)
         focus(task.id)
     }
 
@@ -270,11 +286,11 @@ struct TaskListView: View {
 
     private func performDelete(_ task: Task) {
         let tasks = filteredTasks
-        if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
-            let prevID = idx > 0 ? tasks[idx - 1].id : nil
-            taskStore.deleteTask(task)
-            DispatchQueue.main.async { focusedTaskID = prevID }
-        }
+        guard tasks.contains(where: { $0.id == task.id }) else { return }
+        // Focus falls back to the row above; nil when this was the first one.
+        let prevID = Self.previousTask(before: task, in: tasks)?.id
+        taskStore.deleteTask(task)
+        DispatchQueue.main.async { focusedTaskID = prevID }
     }
 
     private func focus(_ id: UUID) {
