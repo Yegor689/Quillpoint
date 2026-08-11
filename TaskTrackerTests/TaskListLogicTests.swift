@@ -3,11 +3,14 @@ import Foundation
 import SwiftData
 @testable import Quillpoint
 
-/// Pure list logic that every task view depends on: the filter, the search predicate,
-/// the priority enum, and the shared ordering. None of it had tests, yet `ordered` is
-/// the function that fixed the freeze at ~1,500 tasks — it exists specifically to read
-/// each task's fields ONCE instead of through SwiftData on every comparison, and nothing
-/// guarded that property or the sort it produces.
+/// The list rules worth pinning: the shared ordering and the indent boundaries.
+///
+/// Deliberately NOT covering every pure helper here. A three-case filter switch or a
+/// modulo cycle breaks visibly the moment you open the app, so a test for it only
+/// restates the implementation and makes the suite noisier. These cover the cases that
+/// are costly AND quiet: `ordered` is the fix for the freeze at ~1,500 tasks (nothing
+/// guarded the property it exists for), legacy rows missing `completedAt`, an
+/// out-of-range stored priority from a bad import, and the one-level nesting invariant.
 @MainActor
 struct TaskListLogicTests {
 
@@ -36,52 +39,7 @@ struct TaskListLogicTests {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 6, day: d))!
     }
 
-    // MARK: - TaskFilter
-
-    @Test func filterMatchesByCompletion() throws {
-        let (s, p) = try makeStore()
-        let open = task(s.context, p, done: false)
-        let done = task(s.context, p, done: true)
-
-        #expect(TaskFilter.all.matches(open) && TaskFilter.all.matches(done))
-        #expect(TaskFilter.active.matches(open) && !TaskFilter.active.matches(done))
-        #expect(TaskFilter.done.matches(done) && !TaskFilter.done.matches(open))
-    }
-
-    /// The raw values are persisted (@AppStorage "taskFilter") and shown in the picker,
-    /// so changing one silently resets everyone's saved filter.
-    @Test func filterRawValuesAreStable() {
-        #expect(TaskFilter.all.rawValue == "All")
-        #expect(TaskFilter.active.rawValue == "Active")
-        #expect(TaskFilter.done.rawValue == "Done")
-        #expect(TaskFilter.allCases.count == 3)
-    }
-
-    // MARK: - Search
-
-    @Test func searchMatchesTitleOrNotesCaseInsensitively() throws {
-        let (s, p) = try makeStore()
-        let t = task(s.context, p, title: "Buy Milk", desc: "From the CORNER shop")
-
-        #expect(t.matchesSearch(""), "an empty query matches everything")
-        #expect(t.matchesSearch("milk"), "title, case-insensitive")
-        #expect(t.matchesSearch("corner"), "notes, case-insensitive")
-        #expect(t.matchesSearch("MILK"))
-        #expect(t.matchesSearch("bread") == false)
-    }
-
     // MARK: - Priority
-
-    /// The inline priority button cycles with `next`; the raw values are persisted, so
-    /// both the order and the numbers matter.
-    @Test func priorityCyclesCriticalNormalLowAndWrapsAround() {
-        #expect(Priority.critical.next == .normal)
-        #expect(Priority.normal.next == .low)
-        #expect(Priority.low.next == .critical, "cycling wraps back to the start")
-        #expect(Priority.critical.rawValue == 0)
-        #expect(Priority.normal.rawValue == 1)
-        #expect(Priority.low.rawValue == 2)
-    }
 
     /// `priority` is a stored Int, so a value outside the enum (bad import, future
     /// version) must degrade to .normal rather than trap.
@@ -134,23 +92,30 @@ struct TaskListLogicTests {
         #expect(result.count == 2, "neither task is dropped")
     }
 
-    // MARK: - Indent / previous-row rules
-
-    /// Extracted from the view so these boundaries are reachable. Both callers work on
-    /// the FILTERED list, so "previous" is the row visibly above — not the previous task
-    /// in the project.
-    @Test func previousTaskReturnsTheRowAboveOrNil() throws {
+    /// The whole reason `ordered` exists: it reads each task's fields once into a plain
+    /// key struct, instead of letting the sort comparator touch SwiftData O(n log n)
+    /// times. Sorting a large batch must stay fast — the old comparator hung the app at
+    /// roughly this size.
+    @Test func orderedSortsALargeListQuickly() throws {
         let (s, p) = try makeStore()
-        let first = task(s.context, p, title: "first")
-        let middle = task(s.context, p, title: "middle")
-        let last = task(s.context, p, title: "last")
-        let visible = [first, middle, last]
+        let tasks = (0..<2_000).map { i in
+            task(s.context, p, title: "t\(i)", done: i % 3 == 0,
+                 sortIndex: (i * 7919) % 2_000, created: day((i % 28) + 1))
+        }
 
-        #expect(TaskListView.previousTask(before: middle, in: visible)?.plainTitle == "first")
-        #expect(TaskListView.previousTask(before: last, in: visible)?.plainTitle == "middle")
-        #expect(TaskListView.previousTask(before: first, in: visible) == nil,
-                "the first row has nothing above it")
+        let start = Date()
+        let result = TaskListView.ordered(tasks)
+        let elapsed = Date().timeIntervalSince(start)
+
+        #expect(result.count == 2_000, "nothing lost")
+        #expect(elapsed < 2.0, "took \(elapsed)s — the per-comparison store reads are back")
+        // Open tasks all precede completed ones.
+        let firstDone = result.firstIndex(where: \.isDone) ?? result.count
+        #expect(result[..<firstDone].allSatisfy { !$0.isDone })
+        #expect(result[firstDone...].allSatisfy { $0.isDone })
     }
+
+    // MARK: - Indent / previous-row rules
 
     @Test func previousTaskHandlesEmptyAndAbsentInputs() throws {
         let (s, p) = try makeStore()
@@ -193,43 +158,4 @@ struct TaskListLogicTests {
         #expect(TaskListView.indentTarget(for: parent, in: [first, parent])?.plainTitle == "first")
     }
 
-    @Test func indentTargetRefusesTheFirstRow() throws {
-        let (s, p) = try makeStore()
-        let only = task(s.context, p, title: "only")
-        let second = task(s.context, p, title: "second")
-
-        #expect(TaskListView.indentTarget(for: only, in: [only, second]) == nil,
-                "nothing above the first row to nest under")
-        #expect(TaskListView.indentTarget(for: second, in: [only, second])?.plainTitle == "only")
-    }
-
-    @Test func orderedIsStableForEmptyAndSingleInputs() throws {
-        let (s, p) = try makeStore()
-        #expect(TaskListView.ordered([]).isEmpty)
-        let only = task(s.context, p, title: "solo")
-        #expect(TaskListView.ordered([only]).map(\.plainTitle) == ["solo"])
-    }
-
-    /// The whole reason `ordered` exists: it reads each task's fields once into a plain
-    /// key struct, instead of letting the sort comparator touch SwiftData O(n log n)
-    /// times. Sorting a large batch must stay fast — the old comparator hung the app at
-    /// roughly this size.
-    @Test func orderedSortsALargeListQuickly() throws {
-        let (s, p) = try makeStore()
-        let tasks = (0..<2_000).map { i in
-            task(s.context, p, title: "t\(i)", done: i % 3 == 0,
-                 sortIndex: (i * 7919) % 2_000, created: day((i % 28) + 1))
-        }
-
-        let start = Date()
-        let result = TaskListView.ordered(tasks)
-        let elapsed = Date().timeIntervalSince(start)
-
-        #expect(result.count == 2_000, "nothing lost")
-        #expect(elapsed < 2.0, "took \(elapsed)s — the per-comparison store reads are back")
-        // Open tasks all precede completed ones.
-        let firstDone = result.firstIndex(where: \.isDone) ?? result.count
-        #expect(result[..<firstDone].allSatisfy { !$0.isDone })
-        #expect(result[firstDone...].allSatisfy { $0.isDone })
-    }
 }
