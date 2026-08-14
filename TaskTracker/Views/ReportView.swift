@@ -11,6 +11,7 @@ struct ReportView: View {
     @State private var range: ReportRange = .last30
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
     @State private var customEnd = Date()
+    @State private var path = NavigationPath()
 
     /// The resolved interval for the active range (preset or custom).
     private var interval: DateInterval {
@@ -37,14 +38,28 @@ struct ReportView: View {
 
     private var days: [DayLog] { ReportBuilder.build(facts: facts, interval: interval) }
 
+    /// The report is built from `TaskFacts` value types, not the models themselves, so a
+    /// row only knows its task's `id`. Resolve it back through the same `projects` query
+    /// the report was built from — a row whose task has since been deleted simply won't
+    /// open, rather than pushing a dangling detail view.
+    private func task(withID id: UUID) -> Task? {
+        for project in projects {
+            if let match = project.tasks.first(where: { $0.id == id }) { return match }
+        }
+        return nil
+    }
+
     var body: some View {
         // Wrapped in a NavigationStack so the detail column has the same structure as the
         // task-list destinations (which each own a NavigationStack). Without it, switching
         // from a project with a task pushed onto ITS stack left that pushed task-detail
         // view lingering over the Report pane; a fresh empty stack here dismisses it, the
         // same way All Projects (AllTasksView, which has its own stack) already did.
-        NavigationStack {
+        NavigationStack(path: $path) {
             reportContent
+                .navigationDestination(for: Task.self) { task in
+                    TaskDetailView(task: task)
+                }
         }
     }
 
@@ -64,7 +79,9 @@ struct ReportView: View {
                 } else {
                     summaryCard(ReportBuilder.summarize(facts: facts, interval: interval))
                     ForEach(log) { day in
-                        DaySection(day: day, tint: appAccent)
+                        DaySection(day: day, tint: appAccent) { id in
+                            if let task = task(withID: id) { path.append(task) }
+                        }
                     }
                 }
             }
@@ -151,6 +168,7 @@ struct ReportView: View {
 private struct DaySection: View {
     let day: DayLog
     let tint: Color
+    let open: (UUID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -176,20 +194,25 @@ private struct DaySection: View {
     private func taskList(tasks: [ReportTask]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(tasks) { task in
-                TaskRow(task: task)
+                TaskRow(task: task, open: open)
             }
         }
     }
 }
 
-/// One completed task in a day's log. A task that finished alongside subtasks carries a
-/// small inline chevron after its title; the subtasks stay hidden until it's clicked.
+/// One completed task in a day's log. Double-clicking a row opens that task's detail view,
+/// matching the task list and All Projects — the back button returns to the report.
+///
+/// A task that finished alongside subtasks carries a small inline chevron after its title.
+/// The chevron is its own click target rather than the whole row: the row's click belongs
+/// to opening the task, so expanding has to be a deliberate hit on the disclosure control.
 ///
 /// The chevron sits ON the title line rather than in a DisclosureGroup or its own row, so
 /// a collapsed row is exactly as tall as a row with no subtasks — the log's height doesn't
 /// change just because tasks happen to have children.
 private struct TaskRow: View {
     let task: ReportTask
+    let open: (UUID) -> Void
     @State private var isExpanded = false
 
     private var hasSubtasks: Bool { !task.subtasks.isEmpty }
@@ -205,11 +228,18 @@ private struct TaskRow: View {
                     .font(.body)
                     .lineLimit(1)
                 if hasSubtasks {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .accessibilityLabel(isExpanded ? "Hide subtasks" : "Show subtasks")
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isExpanded ? "Hide subtasks" : "Show subtasks")
+                    .accessibilityLabel(isExpanded ? "Hide subtasks" : "Show subtasks")
                 }
                 Spacer(minLength: 8)
                 Text(task.projectTitle)
@@ -218,10 +248,7 @@ private struct TaskRow: View {
                     .lineLimit(1)
             }
             .contentShape(Rectangle())
-            .onTapGesture {
-                guard hasSubtasks else { return }
-                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
-            }
+            .onTapGesture(count: 2) { open(task.id) }
 
             if hasSubtasks && isExpanded {
                 VStack(alignment: .leading, spacing: 5) {
@@ -237,6 +264,8 @@ private struct TaskRow: View {
                                 .lineLimit(1)
                             Spacer(minLength: 8)
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { open(sub.id) }
                     }
                 }
                 .padding(.leading, 24)
